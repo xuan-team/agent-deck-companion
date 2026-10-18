@@ -1,0 +1,28 @@
+{
+  "manifest_version": 1,
+  "id": "qwen",
+  "display_name": "Qwen Code",
+  "built_in": true,
+  "detection": { "process_names": ["qwen"], "argv_patterns": ["@qwen-code/qwen-code/", "/.qwen/updates/", "/qwen-code/lib/cli-entry.js"] },
+  "surfaces": ["terminal"],
+  "default_surface": "terminal",
+  "hooks": {
+    "config_relative": ".qwen/settings.json",
+    "handler_format": "qwen",
+    "events": ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop", "TodoCreated", "TodoCompleted", "Stop", "StopFailure", "SessionEnd"]
+  },
+  "keymap": {
+    "terminal": {
+      "K1": { "label": "PANEL 1", "hint": "Active Panel 1", "action": { "type": "active_panel", "slot": 1 } },
+      "K2": { "label": "PANEL 2", "hint": "Active Panel 2", "action": { "type": "active_panel", "slot": 2 } },
+      "K3": { "label": "PANEL 3", "hint": "Active Panel 3", "action": { "type": "active_panel", "slot": 3 } },
+      "K4": { "label": "OK", "hint": "Enter", "action": { "type": "shortcut", "key": "enter" } },
+      "K5": { "label": "NO", "hint": "Esc", "action": { "type": "shortcut", "key": "esc" } },
+      "K6": { "label": "HIST", "hint": "Ctrl+R", "action": { "type": "shortcut", "key": "r", "modifiers": ["control"] } },
+      "K7": { "label": "STOP", "hint": "Esc", "action": { "type": "shortcut", "key": "esc" } },
+      "K8": { "label": "SEND", "hint": "Enter", "action": { "type": "shortcut", "key": "enter" } },
+      "K9": { "label": "FORK", "hint": "/branch", "action": { "type": "text_input", "text": "/branch", "submit": true } },
+      "K10": { "label": "VOICE", "hint": "暂不支持", "action": { "type": "disabled" } }
+    }
+  }
+}

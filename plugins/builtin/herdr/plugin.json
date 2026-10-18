@@ -1,0 +1,26 @@
+{
+  "manifest_version": 1,
+  "id": "herdr",
+  "display_name": "Herdr",
+  "built_in": true,
+  "detection": {
+    "process_names": ["herdr"]
+  },
+  "surfaces": ["herdr_pane"],
+  "default_surface": "herdr_pane",
+  "terminal_title_hints": ["herdr", "topeM1", "["],
+  "keymap": {
+    "terminal": {
+      "K1": { "label": "PANEL 1", "hint": "Active Panel 1", "action": { "type": "active_panel", "slot": 1 } },
+      "K2": { "label": "PANEL 2", "hint": "Active Panel 2", "action": { "type": "active_panel", "slot": 2 } },
+      "K3": { "label": "PANEL 3", "hint": "Active Panel 3", "action": { "type": "active_panel", "slot": 3 } },
+      "K4": { "label": "OK", "hint": "选中", "action": { "type": "shortcut", "key": "enter" } },
+      "K5": { "label": "NO", "hint": "退出", "action": { "type": "shortcut", "key": "escape" } },
+      "K6": { "label": "VIEW", "hint": "prefix+b", "action": { "type": "herdr_prefix", "key": "b" } },
+      "K7": { "label": "VSP", "hint": "prefix+v", "action": { "type": "herdr_prefix", "key": "v" } },
+      "K8": { "label": "HSP", "hint": "prefix+-", "action": { "type": "herdr_prefix", "key": "-" } },
+      "K9": { "label": "", "hint": "", "action": { "type": "disabled" } },
+      "K10": { "label": "SESSION", "hint": "prefix+g", "action": { "type": "herdr_prefix", "key": "g" } }
+    }
+  }
+}

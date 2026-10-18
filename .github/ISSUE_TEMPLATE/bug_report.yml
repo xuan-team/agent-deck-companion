@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a reproducible problem with AgentDeck Companion.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please search existing issues first, and remove
+        tokens, private paths and session content from any logs you attach.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Companion version or commit
+      placeholder: v0.1.0 or a commit SHA
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and architecture
+      placeholder: macOS 15.x (Apple Silicon)
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent / terminal involved
+      multiple: true
+      options:
+        - ChatGPT Desktop / Codex
+        - Claude Code
+        - Qwen Code
+        - Codex CLI
+        - Herdr
+        - DeepSeek Harness (DSH)
+        - OpenCode / Qoder
+        - Not agent specific
+        - Other (describe below)
+    validations:
+      required: false
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: AgentDeck hardware connected?
+      options:
+        - "No"
+        - "Yes (USB)"
+        - "Yes (BLE)"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant logs with secrets removed.
+      render: text
+    validations:
+      required: false

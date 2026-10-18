@@ -1,0 +1,14 @@
+# Dependencies and build output
+node_modules/
+build/
+.svelte-kit/
+src-tauri/target
+
+# Tooling
+compile_commands.json
+.qwen/
+.qoder/
+
+# OS and editor files
+.DS_Store
+*.log

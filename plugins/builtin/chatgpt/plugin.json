@@ -1,0 +1,23 @@
+{
+  "manifest_version": 1,
+  "id": "chatgpt",
+  "display_name": "ChatGPT",
+  "built_in": true,
+  "detection": {},
+  "surfaces": ["desktop"],
+  "default_surface": "desktop",
+  "keymap": {
+    "desktop": {
+      "K1": { "label": "PANEL 1", "hint": "Active Panel 1", "action": { "type": "active_panel", "slot": 1 } },
+      "K2": { "label": "PANEL 2", "hint": "Active Panel 2", "action": { "type": "active_panel", "slot": 2 } },
+      "K3": { "label": "PANEL 3", "hint": "Active Panel 3", "action": { "type": "active_panel", "slot": 3 } },
+      "K4": { "label": "OK", "hint": "ACT07 Approve", "action": { "type": "chatgpt_approve" } },
+      "K5": { "label": "NO", "hint": "ACT08 Reject", "action": { "type": "chatgpt_reject" } },
+      "K6": { "label": "FORK", "hint": "ACT09 Fork", "action": { "type": "chatgpt_fork" } },
+      "K7": { "label": "FAST", "hint": "ACT06 Fast", "action": { "type": "chatgpt_fast" } },
+      "K8": { "label": "SIDEBAR", "hint": "⌘B", "action": { "type": "shortcut", "key": "b", "modifiers": ["command"] } },
+      "K9": { "label": "SEND", "hint": "ACT12 Send", "action": { "type": "shortcut", "key": "enter" } },
+      "K10": { "label": "MIC", "hint": "ACT10 Mic", "action": { "type": "chatgpt_voice_hold" } }
+    }
+  }
+}

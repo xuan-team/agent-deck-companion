@@ -1,0 +1,6 @@
+# dsh-deck-bridge bundle patch: mounts the deck-bridge web client into any DSH
+# profile that lists this package in `dsh.profile.bundles`
+# (or installs it via `dsh plugin --profile <name> add ...`).
+- insert:
+    - id: deck-bridge
+      name: 'dsh-deck-bridge'
