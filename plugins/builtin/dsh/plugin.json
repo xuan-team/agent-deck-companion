@@ -1,0 +1,101 @@
+{
+  "manifest_version": 1,
+  "id": "dsh",
+  "display_name": "DeepSeek Harness",
+  "built_in": true,
+  "detection": {
+    "process_names": [
+      "deepseek-harness"
+    ]
+  },
+  "surfaces": [
+    "web",
+    "terminal"
+  ],
+  "default_surface": "web",
+  "keymap": {
+    "web": {
+      "K1": {
+        "label": "PANEL 1",
+        "hint": "Active Panel 1",
+        "action": {
+          "type": "active_panel",
+          "slot": 1
+        }
+      },
+      "K2": {
+        "label": "PANEL 2",
+        "hint": "Active Panel 2",
+        "action": {
+          "type": "active_panel",
+          "slot": 2
+        }
+      },
+      "K3": {
+        "label": "PANEL 3",
+        "hint": "Active Panel 3",
+        "action": {
+          "type": "active_panel",
+          "slot": 3
+        }
+      },
+      "K4": {
+        "label": "OK",
+        "hint": "y + Enter",
+        "action": {
+          "type": "text_input",
+          "text": "y",
+          "submit": true
+        }
+      },
+      "K5": {
+        "label": "NO",
+        "hint": "n + Enter",
+        "action": {
+          "type": "text_input",
+          "text": "n",
+          "submit": true
+        }
+      },
+      "K6": {
+        "label": "COMPACT",
+        "hint": "/compact",
+        "action": {
+          "type": "slash_command",
+          "text": "/compact"
+        }
+      },
+      "K7": {
+        "label": "PLAN",
+        "hint": "/plan",
+        "action": {
+          "type": "slash_command",
+          "text": "/plan"
+        }
+      },
+      "K8": {
+        "label": "EXPORT",
+        "hint": "/export",
+        "action": {
+          "type": "slash_command",
+          "text": "/export"
+        }
+      },
+      "K9": {
+        "label": "SEND",
+        "hint": "Enter",
+        "action": {
+          "type": "shortcut",
+          "key": "enter"
+        }
+      },
+      "K10": {
+        "label": "",
+        "hint": "",
+        "action": {
+          "type": "disabled"
+        }
+      }
+    }
+  }
+}

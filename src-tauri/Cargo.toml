@@ -1,0 +1,43 @@
+[package]
+name = "agent-deck-companion"
+version = "0.1.0"
+description = "Local-first desktop companion for AI coding agents, with optional AgentDeck hardware support"
+authors = ["xuan team"]
+license = "MIT"
+repository = "https://github.com/xuan-team/agent-deck-companion"
+homepage = "https://github.com/xuan-team/agent-deck-companion"
+readme = "../README.md"
+edition = "2021"
+
+[lib]
+name = "agent_deck_companion_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+axum = "0.8"
+base64 = "0.23.1"
+dirs = "6"
+hidapi = "2"
+hmac = "0.13.0"
+reqwest = { version = "0.13.1", default-features = false, features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11.0"
+sysinfo = "0.37"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tokio = { version = "1", features = ["net"] }
+tower-http = { version = "0.6", features = ["cors"] }
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+core-foundation = "0.10"
+core-graphics = "0.25"
+core-text = "22"
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-foundation = "0.3"
+objc2-user-notifications = "0.3"

@@ -1,0 +1,275 @@
+/*
+ * Agent Deck Companion — shared design system.
+ *
+ * THIS FILE IS THE ONLY PLACE A COLOUR SCHEME IS DEFINED.
+ *
+ * Every window (main companion, session panel, function-key hint) renders its
+ * content inside a `.theme-root .theme-<id>` element, so one palette reaches
+ * all three surfaces at once. Themes are also bare classes (not scoped to
+ * `.theme-root`) so the companion's theme dots can borrow a theme's `--accent`
+ * without repeating any hex value in TypeScript.
+ *
+ * The four themes: 经典 classic · 现代 modern · 科技 tech · 清新 fresh.
+ * Selection lives in the companion window and is persisted by Rust, then
+ * broadcast through the shared snapshot.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+
+  /* 现代 modern — the default palette. */
+  --bg: #0b0d12;
+  --bg-panel: #12161f;
+  --bg-inset: #0d1017;
+  --bg-elevated: #1b2130;
+  --border: #262d3d;
+  --border-strong: #3b465c;
+
+  --text: #eceff6;
+  --text-mid: #a4adc0;
+  --text-dim: #707a8d;
+
+  --accent: #7c8cff;
+  --accent-dim: #3a4286;
+  --accent-glow: #93a0ff;
+  --on-accent: #0a0c16;
+
+  --session-row: #171c28;
+  --session-hover: #212837;
+
+  --status-working: #5aa9ff;
+  --status-waiting: #ffcf5c;
+  --status-unread: #c08cff;
+  --status-error: #ff6b73;
+
+  --error-bg: #2a1218;
+  --error-border: #6d2b34;
+  --error-text: #ff9aa0;
+
+  --shadow-soft: #0006;
+  --shadow-strong: #0009;
+  --inset-highlight: #ffffff0a;
+
+  /* Derived tokens — resolved against whichever accent the active theme sets. */
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --status-idle: var(--accent-glow);
+
+  /* Mock hardware keeps a fixed device chrome so it still reads as a physical
+     object in every theme; only the accent-driven parts follow the palette.
+     The 清新 theme overrides these below with a light aluminium body. */
+  --device-body: #16201b;
+  --device-body-2: #0f1714;
+  --device-key-top: #1d2a23;
+  --device-key-bottom: #0e1512;
+  --device-key-edge: #080b09;
+  --device-key-shadow: #060907;
+  --device-screw: #080a09;
+  --lcd-bg-a: #172a46;
+  --lcd-bg-b: #07101d;
+  --lcd-text: #dce8ff;
+  --lcd-text-strong: #edf5ff;
+  --lcd-text-dim: #6c849f;
+  --lcd-text-faint: #66819c;
+  --lcd-accent: #b7ffd2;
+  --lcd-border: #1e3550;
+  --lcd-fn-bg: #161b22;
+  --lcd-fn-text: #75cf96;
+  --knob-a: #343c38;
+  --knob-b: #1a1f1d;
+}
+
+/* The default theme is also exposed as a class so the companion's theme dots
+   can read its accent without duplicating the palette. */
+.theme-modern {
+  color-scheme: dark;
+  --accent: #7c8cff;
+  --accent-dim: #3a4286;
+  --accent-glow: #93a0ff;
+  --on-accent: #0a0c16;
+}
+
+/* 经典 classic — warm ink and brass. */
+.theme-classic {
+  color-scheme: dark;
+  --bg: #12100c;
+  --bg-panel: #1c1712;
+  --bg-inset: #14110c;
+  --bg-elevated: #272019;
+  --border: #3a3126;
+  --border-strong: #574836;
+
+  --text: #f3ecdf;
+  --text-mid: #bdb09a;
+  --text-dim: #877b66;
+
+  --accent: #d8a657;
+  --accent-dim: #6f5430;
+  --accent-glow: #e7ba6f;
+  --on-accent: #1a1206;
+
+  --session-row: #231d15;
+  --session-hover: #2f261b;
+
+  --status-working: #7fb0d9;
+  --status-waiting: #e0b34a;
+  --status-unread: #c79ae0;
+  --status-error: #dd7d6d;
+
+  --error-bg: #2b1512;
+  --error-border: #6d332b;
+  --error-text: #f0a094;
+}
+
+/* 科技 tech — deep space with a cyan glow. */
+.theme-tech {
+  color-scheme: dark;
+  --bg: #05080e;
+  --bg-panel: #0a131d;
+  --bg-inset: #060b12;
+  --bg-elevated: #10212f;
+  --border: #17303f;
+  --border-strong: #245064;
+
+  --text: #dff3f8;
+  --text-mid: #8fb6c4;
+  --text-dim: #5d808f;
+
+  --accent: #22d3ee;
+  --accent-dim: #125f6e;
+  --accent-glow: #59e5f7;
+  --on-accent: #03141a;
+
+  --session-row: #0d1a25;
+  --session-hover: #14293b;
+
+  --status-working: #4dabff;
+  --status-waiting: #ffd24a;
+  --status-unread: #a78bfa;
+  --status-error: #ff5f6d;
+
+  --error-bg: #2a1016;
+  --error-border: #69262f;
+  --error-text: #ff97a0;
+}
+
+/* 清新 fresh — the light theme: soft mint paper with emerald accents. */
+.theme-fresh {
+  color-scheme: light;
+  --bg: #eef5f1;
+  --bg-panel: #ffffff;
+  --bg-inset: #f4f9f6;
+  --bg-elevated: #ffffff;
+  --border: #d3e1d9;
+  --border-strong: #aec6ba;
+
+  --text: #16241c;
+  --text-mid: #4b5a51;
+  --text-dim: #75847b;
+
+  --accent: #12a866;
+  --accent-dim: #bfe6d0;
+  --accent-glow: #18c078;
+  --on-accent: #ffffff;
+
+  --session-row: #f7fbf9;
+  --session-hover: #e9f4ee;
+
+  --status-working: #1f6fd0;
+  --status-waiting: #a8760a;
+  --status-unread: #7b3fd4;
+  --status-error: #ce3b31;
+
+  --error-bg: #fdecea;
+  --error-border: #f0bdb8;
+  --error-text: #b3261e;
+
+  --shadow-soft: #26402f14;
+  --shadow-strong: #26402f26;
+  --inset-highlight: #ffffffcc;
+
+  /* Light aluminium deck so the hardware mock feels at home on paper. */
+  --device-body: #eef2f0;
+  --device-body-2: #dde6e1;
+  --device-key-top: #ffffff;
+  --device-key-bottom: #e6ece9;
+  --device-key-edge: #c8d3cd;
+  --device-key-shadow: #b4c2bb;
+  --device-screw: #9fb0a8;
+  --knob-a: #ffffff;
+  --knob-b: #dbe3df;
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html,
+body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea { font: inherit; color: inherit; }
+
+h1, h2, h3, p { margin: 0; }
+
+/* Elements the browser already ships (the Mock / developer-test disclosures)
+   should look intentional rather than like unstyled HTML. */
+summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  list-style: none;
+}
+summary::-webkit-details-marker { display: none; }
+summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 5px;
+  transition: transform 140ms ease;
+}
+details[open] > summary::before { transform: rotate(90deg); }
+summary:hover { color: var(--text-mid); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "manifest_version": 1,
+  "id": "opencode",
+  "display_name": "OpenCode",
+  "detection": {
+    "process_names": ["opencode", "opencode2"],
+    "argv_patterns": ["/opencode/cli.js", "@opencode-ai/"],
+    "exclude_argv_patterns": ["agent-deck-companion"]
+  },
+  "surfaces": ["terminal"],
+  "default_surface": "terminal",
+  "terminal_title_hints": ["opencode"],
+  "hooks": {
+    "config_relative": ".config/opencode/plugins/agent-deck-companion/index.js",
+    "events": ["session.execution.started", "session.execution.succeeded", "session.execution.failed", "permission.asked", "form.created", "session.text.delta"],
+    "handler_format": "opencode_v2"
+  },
+  "keymap": {
+    "terminal": {
+      "K1": { "label": "PANEL 1", "hint": "Active Panel 1", "action": { "type": "active_panel", "slot": 1 } },
+      "K2": { "label": "PANEL 2", "hint": "Active Panel 2", "action": { "type": "active_panel", "slot": 2 } },
+      "K3": { "label": "PANEL 3", "hint": "Active Panel 3", "action": { "type": "active_panel", "slot": 3 } },
+      "K4": { "label": "OK", "hint": "Enter", "action": { "type": "shortcut", "key": "enter" } },
+      "K5": { "label": "NO", "hint": "Esc", "action": { "type": "shortcut", "key": "esc" } },
+      "K6": { "label": "HIST", "hint": "Ctrl+X → L", "action": { "type": "leader", "leader": "ctrl+x", "key": "l" } },
+      "K7": { "label": "STOP", "hint": "Esc", "action": { "type": "shortcut", "key": "esc" } },
+      "K8": { "label": "SEND", "hint": "Enter", "action": { "type": "shortcut", "key": "enter" } },
+      "K9": { "label": "NEW", "hint": "Ctrl+X → N", "action": { "type": "leader", "leader": "ctrl+x", "key": "n" } },
+      "K10": { "label": "VOICE", "hint": "暂不支持", "action": { "type": "disabled" } }
+    }
+  }
+}

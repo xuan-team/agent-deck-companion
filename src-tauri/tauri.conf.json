@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Agent Deck Companion",
+  "version": "0.1.0",
+  "identifier": "dev.agentdeck.companion",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Agent Deck Companion",
+        "width": 800,
+        "height": 520,
+        "minWidth": 760,
+        "minHeight": 560,
+        "resizable": true,
+        "decorations": false,
+        "visible": false
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"],
+    "resources": {
+      "../dsh-deck-bridge/lib": "dsh-deck-bridge/lib",
+      "../dsh-deck-bridge/cordis.patch.yml": "dsh-deck-bridge/cordis.patch.yml",
+      "../dsh-deck-bridge/package.json": "dsh-deck-bridge/package.json"
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "infoPlist": "Info.plist"
+    }
+  }
+}
