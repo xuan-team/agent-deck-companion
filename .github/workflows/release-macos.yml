@@ -1,0 +1,116 @@
+name: Release (macOS)
+
+# Build a universal (Apple Silicon + Intel) DMG and publish it as a GitHub Release.
+# The build is ad-hoc signed and not notarized, so the release notes tell users how to
+# clear the quarantine flag with `xattr -dr com.apple.quarantine`.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and publish (for example v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: macOS universal DMG
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Verify tag matches app version
+        run: |
+          version=$(jq -r '.version' src-tauri/tauri.conf.json)
+          tag="${RELEASE_TAG#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "::error::Tag $RELEASE_TAG does not match the version in src-tauri/tauri.conf.json ($version). Bump the version before tagging."
+            exit 1
+          fi
+
+      - name: Build DMG and publish release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: "Agent Deck Companion ${{ env.RELEASE_TAG }}"
+          releaseDraft: false
+          prerelease: false
+          retryAttempts: 2
+          args: --target universal-apple-darwin --bundles dmg
+          releaseBody: |
+            Universal DMG for Apple Silicon and Intel Macs.
+
+            ## 安装 / Install
+
+            1. 打开 DMG，把 **Agent Deck Companion** 拖进 `/Applications`。
+            2. 本构建使用 **ad-hoc 签名，未经 Apple 公证**，macOS 会拦截首次启动（提示「已损坏」
+               「无法验证开发者」或「无法打开」）。安装后在终端执行一次：
+
+               ```bash
+               xattr -dr com.apple.quarantine "/Applications/Agent Deck Companion.app"
+               ```
+
+               `-r` 需要递归清除 `.app` 包内所有文件的 quarantine 标记；只对 `.app` 目录执行
+               `xattr -d` 通常不足以启动应用。该命令只清除本应用的下载隔离标记，不会关闭系统安全保护。
+            3. 从「应用程序」或 Launchpad 正常启动，并按系统提示授予所需权限。基础会话查看不需要
+               「输入监控」或「辅助功能」。
+
+            1. Open the DMG and drag **Agent Deck Companion** into `/Applications`.
+            2. This build is **ad-hoc signed and not notarized by Apple**, so Gatekeeper blocks the
+               first launch ("is damaged", "cannot verify the developer", or "cannot be opened").
+               Run this once after installing:
+
+               ```bash
+               xattr -dr com.apple.quarantine "/Applications/Agent Deck Companion.app"
+               ```
+
+               `-r` clears the quarantine flag recursively inside the bundle; `xattr -d` on the
+               bundle directory alone is usually not enough. This only clears the download flag for
+               this app — it does not disable macOS security protections.
+            3. Launch it from Applications or Launchpad and grant permissions when prompted. Basic
+               session viewing does not require Input Monitoring or Accessibility.
+
+            If macOS still refuses to open the app, allow it under
+            **System Settings → Privacy & Security → Open Anyway** (系统设置 → 隐私与安全性 → 仍要打开).
+
+            ---
+
+            Built from commit `${{ github.sha }}` with Tauri 2. This is a testing build; a
+            Developer ID signed and notarized release is still pending. See
+            [`doc/macos_release.md`](https://github.com/${{ github.repository }}/blob/main/doc/macos_release.md).

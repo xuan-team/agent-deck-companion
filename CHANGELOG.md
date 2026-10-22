@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- GitHub Actions workflow that builds a universal macOS DMG on `v*` tags, publishes it as a GitHub
+  Release, and includes install notes for the `xattr -dr com.apple.quarantine` step required by the
+  ad-hoc signed build.
+
 ## [0.1.0]
 
 First public release. Agent Deck Companion is a local-first, macOS-first desktop companion for AI

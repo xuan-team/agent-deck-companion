@@ -124,6 +124,14 @@ The bundle is written to `src-tauri/target/release/bundle/macos/`. Builds are ad
 may need to re-grant permissions after rebuilding. See the
 [macOS release guide](doc/macos_release.md).
 
+Tagged releases (`v*`) are built by GitHub Actions into a universal DMG and published on the
+[releases page](https://github.com/xuan-team/agent-deck-companion/releases). Those builds are ad-hoc
+signed and not notarized, so run this once after installing:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Agent Deck Companion.app"
+```
+
 ## Optional: AgentDeck hardware
 
 AgentDeck is an ESP32-based companion keyboard that adds physical keys, a screen, a knob and

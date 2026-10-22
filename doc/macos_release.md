@@ -184,7 +184,23 @@ tail -F /tmp/agent-deck.stderr.log
 
 ## 6. 正式分发流程：发布维护者
 
-正式分发应使用固定的 Developer ID Application 证书完成签名与公证。Tauri 支持在 `bundle.macOS.signingIdentity` 或 `APPLE_SIGNING_IDENTITY` 环境变量中指定签名身份；公证配置按官方文档建立。仓库当前还没有可直接运行的完整正式发布流水线。[Tauri 签名与公证文档](https://tauri.app/distribute/sign/macos/)
+正式分发应使用固定的 Developer ID Application 证书完成签名与公证。Tauri 支持在 `bundle.macOS.signingIdentity` 或 `APPLE_SIGNING_IDENTITY` 环境变量中指定签名身份；公证配置按官方文档建立。[Tauri 签名与公证文档](https://tauri.app/distribute/sign/macos/)
+
+### 6.1 GitHub Actions 自动构建（当前 ad-hoc 内测包）
+
+`.github/workflows/release-macos.yml` 在推送 `v*` tag 或手动运行工作流时，构建 Apple Silicon + Intel 的 universal DMG，并直接创建或更新对应的 GitHub Release。工作流使用仓库默认的 `GITHUB_TOKEN`，不需要额外 secrets；`src-tauri/tauri.conf.json` 中的 `signingIdentity: "-"` 仍然只产生 ad-hoc 签名。
+
+发布新版本：
+
+```bash
+# 先把 src-tauri/tauri.conf.json 的 version 改成 0.2.0，工作流会校验 tag 与版本一致
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+也可以在 Actions 页面手动运行 **Release (macOS)**，输入已存在的 tag。工作流失败时，先检查 tag 与 `src-tauri/tauri.conf.json` 的版本是否一致。
+
+当前流水线产出的 `.dmg` **没有 Developer ID 签名，也没有公证**。Release 说明中已经写入安装步骤和 `xattr -dr com.apple.quarantine` 命令，因此不能套用「已完成公证」的表述。正式签名与公证仍需人工完成以下步骤：
 
 1. 确认版本、目标架构、最低 macOS 版本和固件兼容性。当前硬件键区为 F16–F20，固件与 Companion 必须匹配。
 2. 配置固定签名身份；CI 的证书私钥、证书密码和公证凭据放在受控 secrets 中，不写入仓库。
@@ -206,7 +222,16 @@ xcrun stapler validate "/path/to/Agent Deck Companion.app"
 
 ## 7. 最终用户安装与首次使用
 
-此流程适用于未来完成证书签名、公证的正式版本：
+当前 GitHub Release 中的 DMG 属于未公证的内测包，安装后需要清除 quarantine 标记：
+
+```bash
+# 假设已把 Agent Deck Companion.app 拖到 /Applications
+xattr -dr com.apple.quarantine "/Applications/Agent Deck Companion.app"
+```
+
+`-r` 会递归处理 `.app` 包内所有文件；只对 `.app` 目录执行 `xattr -d` 通常不足以启动应用。该命令只清除这次下载的隔离标记，不需要关闭 Gatekeeper 或 SIP。若仍被拦截，可在「系统设置 → 隐私与安全性」中点击「仍要打开」。
+
+完成证书签名和公证的版本不需要这一步，按下面的流程安装：
 
 1. 下载对应架构的发布包，把 `Agent Deck Companion.app` 安装到 `/Applications`。
 2. 从 Finder 或 Launchpad 打开应用。
@@ -214,7 +239,7 @@ xcrun stapler validate "/path/to/Agent Deck Companion.app"
 4. 验证 A1–A5 切换 Agent，ChatGPT K8 短按切换 sidebar，长按打开配额页。
 5. 拒绝权限时应仍能使用不依赖该权限的功能；发布前需验证并补齐清晰的状态提示。
 
-最终用户不需要 Node.js、Rust、npm 或手动执行 `codesign`。当前 ad-hoc 内测包需明确标为内测，不能套用正式包已经完成公证的描述。用户看到签名或来源异常提示时，应由维护者检查产物，不能把关闭系统安全保护作为标准安装流程。
+最终用户不需要 Node.js、Rust、npm 或手动执行 `codesign`。当前 ad-hoc 内测包需要用户手动执行一次 `xattr` 命令，并需明确标为内测，不能套用正式包已经完成公证的描述。用户看到签名或来源异常提示时，应由维护者检查产物，不能把关闭系统安全保护作为标准安装流程。
 
 ## 8. 发布前待办与验收
 

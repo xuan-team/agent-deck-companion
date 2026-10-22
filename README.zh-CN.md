@@ -111,6 +111,14 @@ npm run tauri:build -- --bundles app
 构建产物位于 `src-tauri/target/release/bundle/macos/`。当前采用 ad-hoc 签名，重新构建后可能需要
 重新授权；构建、签名与分发说明见 [macOS 发布指南](doc/macos_release.md)。
 
+推送 `v*` tag 时，GitHub Actions 会构建 Apple Silicon + Intel 的 universal DMG 并发布到
+[Releases](https://github.com/xuan-team/agent-deck-companion/releases)。该构建只有 ad-hoc 签名、
+未经公证，安装后需要执行一次：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Agent Deck Companion.app"
+```
+
 ## 可选：AgentDeck 硬件
 
 **AgentDeck 是基于 ESP32 的配套硬件键盘**。它为同一套桌面能力增加实体按键、屏幕、旋钮与键盘提示
