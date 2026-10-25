@@ -44,8 +44,16 @@ pub fn start(app: AppHandle, state: Arc<AppRuntime>) {
         // Granting Input Monitoring after launch leaves the first tap attempt
         // unauthorized. Retry until the permission shows up instead of forcing
         // the user to restart the whole app.
-        let mut waiting_logged = false;
+        let mut retrying = false;
         loop {
+            if retrying {
+                thread::sleep(Duration::from_secs(5));
+                // Only probe while waiting. Creating a tap can itself request
+                // access, so don't repeat listen attempts without permission.
+                if !crate::permissions::input_monitoring_granted() {
+                    continue;
+                }
+            }
             let callback_app = app.clone();
             let callback_state = state.clone();
             let ready_app = app.clone();
@@ -107,18 +115,16 @@ pub fn start(app: AppHandle, state: Arc<AppRuntime>) {
 
             match result {
                 Ok(()) => return,
-                Err(()) if !crate::permissions::input_monitoring_granted() => {
-                    if !waiting_logged {
-                        eprintln!(
-                            "[hardware_hid] Input Monitoring is not granted; waiting before retrying the event tap"
-                        );
-                        waiting_logged = true;
-                    }
-                    thread::sleep(Duration::from_secs(5));
-                }
                 Err(()) => {
-                    eprintln!("[hardware_hid] unable to install event tap");
-                    return;
+                    if !retrying {
+                        eprintln!(
+                            "[hardware_hid] unable to install event tap; retrying when Input Monitoring is granted"
+                        );
+                    }
+                    // Authorization can change between tap creation and the
+                    // preflight check, or take time to reach WindowServer.
+                    // A granted preflight must not permanently stop retries.
+                    retrying = true;
                 }
             }
         }

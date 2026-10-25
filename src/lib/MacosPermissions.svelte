@@ -9,12 +9,14 @@
   let status: Permissions | null = null;
   let error = '';
   let hint = '';
+  let hintKind: Kind | null = null;
   let busy = false;
   let polling = false;
   let disposed = false;
   $: zh = $locale === 'zh';
   $: grantedCount = status ? kinds.filter((kind) => status![kind]).length : 0;
   $: allGranted = grantedCount === kinds.length;
+  $: if (hintKind && status?.[hintKind]) { hint = ''; hintKind = null; }
   $: names = {
     accessibility: zh ? '辅助功能 · 发送快捷键' : 'Accessibility · send shortcuts',
     input_monitoring: zh ? '输入监控 · 全局硬件按键' : 'Input Monitoring · global hardware keys'
@@ -34,6 +36,7 @@
         if (status?.[kind]) { hint = ''; return; }
       }
       if (!disposed) {
+        hintKind = kind;
         hint = kind === 'input_monitoring'
           ? (zh
             ? '如果系统没有弹出授权提示，请点「打开设置」，在「输入监控」中启用 Agent Deck Companion；如果列表里没有，点 + 添加 /Applications 里的应用。授权后若仍未生效，请重新启动应用。'
@@ -45,7 +48,7 @@
     } finally { polling = false; }
   }
   async function request(kind: Kind, openSettings: boolean) {
-    busy = true; error = ''; hint = '';
+    busy = true; error = ''; hint = ''; hintKind = null;
     try {
       status = await invoke<Permissions>('request_macos_permission', { kind, openSettings });
       if (!openSettings && !status![kind]) void pollUntilGranted(kind);
@@ -83,7 +86,7 @@
       {/each}
     </div>
     {#if !allGranted}
-      <small>{zh ? '在系统隐私设置中启用 Agent Deck Companion。若授权输入监控，请退出并重新启动应用；回到此窗口可刷新权限状态。' : 'Enable Agent Deck Companion in Privacy settings. Quit and reopen after granting Input Monitoring. Return to this window to refresh access status.'}</small>
+      <small>{zh ? '在系统隐私设置中启用 Agent Deck Companion，回到此窗口可刷新权限状态。输入监控授权后会自动重试监听；若仍未生效，请退出并重新启动应用。' : 'Enable Agent Deck Companion in Privacy settings. Return to this window to refresh access status. Input Monitoring retries automatically after approval; quit and reopen if it still does not take effect.'}</small>
     {/if}
     {#if hint}<p class="hint" role="status">{hint}</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
