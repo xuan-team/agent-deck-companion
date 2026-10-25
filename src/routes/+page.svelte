@@ -463,7 +463,7 @@
         <p>{t('companion_physical_pending')}</p>
       {/if}
     </article>
-    <MacosPermissions hardware />
+    <MacosPermissions />
   <!-- Hardware Simulator -->
   <section class="console-section">
     <div class="section-heading">

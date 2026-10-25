@@ -2,26 +2,54 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { locale } from './i18n';
-  export let hardware = false;
+  type Kind = 'accessibility' | 'input_monitoring';
   type Permissions = { supported: boolean; accessibility: boolean; input_monitoring: boolean };
+
+  const kinds: Kind[] = ['accessibility', 'input_monitoring'];
   let status: Permissions | null = null;
   let error = '';
+  let hint = '';
   let busy = false;
+  let polling = false;
+  let disposed = false;
   $: zh = $locale === 'zh';
-  $: kinds = hardware ? ['accessibility', 'input_monitoring'] as const : ['accessibility'] as const;
   $: grantedCount = status ? kinds.filter((kind) => status![kind]).length : 0;
   $: allGranted = grantedCount === kinds.length;
   $: names = {
     accessibility: zh ? '辅助功能 · 发送快捷键' : 'Accessibility · send shortcuts',
     input_monitoring: zh ? '输入监控 · 全局硬件按键' : 'Input Monitoring · global hardware keys'
-  } as Record<typeof kinds[number], string>;
+  } as Record<Kind, string>;
   async function refresh() {
     try { status = await invoke<Permissions>('get_macos_permissions'); }
     catch (e) { error = String(e); }
   }
-  async function request(kind: typeof kinds[number], openSettings: boolean) {
-    busy = true; error = '';
-    try { status = await invoke<Permissions>('request_macos_permission', { kind, openSettings }); }
+  async function pollUntilGranted(kind: Kind) {
+    polling = true;
+    try {
+      // TCC shows prompts asynchronously, and granting Input Monitoring may
+      // only take effect after the system dialog closes.
+      for (let attempt = 0; attempt < 40 && !disposed; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await refresh();
+        if (status?.[kind]) { hint = ''; return; }
+      }
+      if (!disposed) {
+        hint = kind === 'input_monitoring'
+          ? (zh
+            ? '如果系统没有弹出授权提示，请点「打开设置」，在「输入监控」中启用 Agent Deck Companion；如果列表里没有，点 + 添加 /Applications 里的应用。授权后若仍未生效，请重新启动应用。'
+            : 'If macOS did not show a prompt, open Settings and enable Agent Deck Companion under Input Monitoring; if it is not listed, use + to add it from /Applications. Restart the app if it still does not take effect.')
+          : (zh
+            ? '如果系统没有弹出授权提示，请点「打开设置」，在「辅助功能」中手动启用 Agent Deck Companion。'
+            : 'If macOS did not show a prompt, open Settings and enable Agent Deck Companion under Accessibility.');
+      }
+    } finally { polling = false; }
+  }
+  async function request(kind: Kind, openSettings: boolean) {
+    busy = true; error = ''; hint = '';
+    try {
+      status = await invoke<Permissions>('request_macos_permission', { kind, openSettings });
+      if (!openSettings && !status![kind]) void pollUntilGranted(kind);
+    }
     catch (e) { error = String(e); }
     finally { busy = false; }
   }
@@ -29,7 +57,7 @@
     if (!('__TAURI_INTERNALS__' in window)) return;
     void refresh();
     window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
+    return () => { disposed = true; window.removeEventListener('focus', refresh); };
   });
 </script>
 
@@ -48,7 +76,7 @@
           <span class="perm-name">{names[kind]}</span>
           <span class="perm-state" class:granted={status[kind]}>{status[kind] ? (zh ? '已授权' : 'Granted') : (zh ? '未授权' : 'Not granted')}</span>
           <div class="perm-actions">
-            {#if !status[kind]}<button disabled={busy} onclick={() => request(kind, false)}>{zh ? '申请权限' : 'Request access'}</button>{/if}
+            {#if !status[kind]}<button disabled={busy || polling} onclick={() => request(kind, false)}>{zh ? '申请权限' : 'Request access'}</button>{/if}
             <button disabled={busy} onclick={() => request(kind, true)}>{zh ? '打开设置' : 'Open settings'}</button>
           </div>
         </div>
@@ -57,6 +85,7 @@
     {#if !allGranted}
       <small>{zh ? '在系统隐私设置中启用 Agent Deck Companion。若授权输入监控，请退出并重新启动应用；回到此窗口可刷新权限状态。' : 'Enable Agent Deck Companion in Privacy settings. Quit and reopen after granting Input Monitoring. Return to this window to refresh access status.'}</small>
     {/if}
+    {#if hint}<p class="hint" role="status">{hint}</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </section>
 {/if}
@@ -84,5 +113,6 @@
   button:hover:not(:disabled) { border-color: var(--accent-dim); background: var(--bg-elevated); }
   button:disabled { opacity: .45; cursor: default; }
   small { display: block; margin-top: 10px; font-size: var(--fs-xs); line-height: 1.6; color: var(--text-dim); }
+  .hint { margin: 8px 0 0; font-size: var(--fs-xs); line-height: 1.6; color: var(--status-waiting); }
   .error { margin: 8px 0 0; font-size: var(--fs-xs); color: var(--status-error); }
 </style>

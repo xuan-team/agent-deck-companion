@@ -7,10 +7,20 @@ pub struct Permissions {
 }
 
 #[cfg(target_os = "macos")]
+pub fn input_monitoring_granted() -> bool {
+    native::input_monitoring_granted()
+}
+
+#[cfg(target_os = "macos")]
 mod native {
     use core_foundation::{
         base::TCFType, boolean::CFBoolean, dictionary::CFDictionary, string::CFString,
     };
+    use core_graphics::event::{
+        CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+        CallbackResult,
+    };
+
     #[link(name = "ApplicationServices", kind = "framework")]
     unsafe extern "C" {
         fn AXIsProcessTrusted() -> bool;
@@ -23,13 +33,42 @@ mod native {
         fn CGPreflightListenEventAccess() -> bool;
         fn CGRequestListenEventAccess() -> bool;
     }
+    #[link(name = "IOKit", kind = "framework")]
+    unsafe extern "C" {
+        fn IOHIDCheckAccess(request_type: i32) -> i32;
+        fn IOHIDRequestAccess(request_type: i32) -> bool;
+    }
+
+    // IOHIDRequestType and IOHIDAccessType from IOHIDLib.h.
+    const LISTEN_EVENT: i32 = 1;
+    const ACCESS_GRANTED: i32 = 0;
+
+    pub(super) fn input_monitoring_granted() -> bool {
+        unsafe {
+            CGPreflightListenEventAccess() || IOHIDCheckAccess(LISTEN_EVENT) == ACCESS_GRANTED
+        }
+    }
+
     pub fn status() -> super::Permissions {
         super::Permissions {
             supported: true,
             accessibility: unsafe { AXIsProcessTrusted() },
-            input_monitoring: unsafe { CGPreflightListenEventAccess() },
+            input_monitoring: input_monitoring_granted(),
         }
     }
+
+    /// TCC registers Input Monitoring from an actual listen attempt;
+    /// `CGRequestListenEventAccess` alone only "potentially prompts".
+    fn probe_listen_event_tap() {
+        let _ = CGEventTap::new(
+            CGEventTapLocation::Session,
+            CGEventTapPlacement::HeadInsertEventTap,
+            CGEventTapOptions::ListenOnly,
+            vec![CGEventType::KeyDown],
+            |_, _, _| CallbackResult::Keep,
+        );
+    }
+
     pub fn request(kind: &str) {
         unsafe {
             if kind == "accessibility" {
@@ -39,7 +78,11 @@ mod native {
                 )]);
                 AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef());
             } else {
+                IOHIDRequestAccess(LISTEN_EVENT);
                 CGRequestListenEventAccess();
+                if !input_monitoring_granted() {
+                    probe_listen_event_tap();
+                }
             }
         }
     }
