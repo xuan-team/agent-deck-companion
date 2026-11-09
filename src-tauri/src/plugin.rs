@@ -235,7 +235,7 @@ impl PluginRegistry {
             .detection
             .exclude_argv_patterns
             .iter()
-            .any(|pattern| argv.iter().any(|arg| arg.contains(pattern)))
+            .any(|pattern| crate::agent_detection::argv_contains(argv, pattern))
         {
             return false;
         }
@@ -243,12 +243,12 @@ impl PluginRegistry {
             .detection
             .process_names
             .iter()
-            .any(|name| name.eq_ignore_ascii_case(process_name))
+            .any(|name| crate::agent_detection::executable_name_matches(process_name, name))
             || plugin
                 .detection
                 .argv_patterns
                 .iter()
-                .any(|pattern| argv.iter().any(|arg| arg.contains(pattern)))
+                .any(|pattern| crate::agent_detection::argv_contains(argv, pattern))
     }
 
     pub fn preferred_surface(&self, id: &str) -> Option<AgentSurface> {

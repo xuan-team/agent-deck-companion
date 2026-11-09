@@ -1,12 +1,14 @@
+use std::{collections::HashMap, fs, path::PathBuf};
+
+#[cfg(unix)]
 use std::{
-    collections::HashMap,
-    fs,
     io::{BufRead, BufReader, ErrorKind, Write},
     os::unix::net::UnixStream,
-    path::PathBuf,
-    process::Command,
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 use sysinfo::System;
 
@@ -219,6 +221,7 @@ pub(crate) fn socket_paths_match(left: Option<&str>, right: Option<&str>) -> boo
     socket_identity(left) == socket_identity(right)
 }
 
+#[cfg(unix)]
 fn api_request(socket_path: Option<&str>, method: &str, params: Value) -> Result<Value, String> {
     let path = socket_path
         .map(PathBuf::from)
@@ -253,15 +256,22 @@ fn api_request(socket_path: Option<&str>, method: &str, params: Value) -> Result
         .ok_or_else(|| "Herdr response missing result".into())
 }
 
+#[cfg(not(unix))]
+fn api_request(_socket_path: Option<&str>, _method: &str, _params: Value) -> Result<Value, String> {
+    Err("Herdr is not available on this platform".into())
+}
+
 /// Subscribe to Herdr lifecycle changes on one persistent socket connection.
 /// The callback is debounced so a burst of related pane events causes a single
 /// companion refresh. Returning means the socket disconnected and should be
 /// reconnected by the caller.
+#[cfg(unix)]
 pub fn subscribe_events(mut on_change: impl FnMut()) -> Result<(), String> {
     let path = default_socket_path().ok_or_else(|| "Herdr socket path unavailable".to_string())?;
     subscribe_events_at(&path, &mut on_change)
 }
 
+#[cfg(unix)]
 fn subscribe_events_at(path: &std::path::Path, on_change: &mut impl FnMut()) -> Result<(), String> {
     let mut stream = UnixStream::connect(&path)
         .map_err(|error| format!("connect {}: {error}", path.display()))?;
@@ -978,6 +988,7 @@ prefix = "ctrl+s" # local override
         assert!(snapshot.agents[0].focused);
     }
 
+    #[cfg(unix)]
     #[test]
     fn socket_client_uses_newline_delimited_json() {
         use std::os::unix::net::UnixListener;
@@ -1007,6 +1018,7 @@ prefix = "ctrl+s" # local override
         fs::remove_file(path).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn event_subscription_batches_a_burst_before_refreshing() {
         use std::os::unix::net::UnixListener;
@@ -1044,6 +1056,7 @@ prefix = "ctrl+s" # local override
         fs::remove_file(path).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn non_native_agent_is_reported_before_focus() {
         use std::os::unix::net::UnixListener;
@@ -1088,6 +1101,7 @@ prefix = "ctrl+s" # local override
         fs::remove_file(path).unwrap();
     }
 
+    #[cfg(unix)]
     fn now_for_test() -> u128 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

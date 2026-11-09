@@ -48,7 +48,12 @@ fn companion_dir(home: &Path) -> PathBuf {
 }
 
 fn bridge_path(home: &Path) -> PathBuf {
-    companion_dir(home).join("bin").join(MARKER)
+    let file = if cfg!(windows) {
+        format!("{MARKER}.ps1")
+    } else {
+        MARKER.to_string()
+    };
+    companion_dir(home).join("bin").join(file)
 }
 
 fn token_path(home: &Path) -> PathBuf {
@@ -134,17 +139,52 @@ fn ensure_bridge(home: &Path) -> Result<PathBuf, String> {
     }
 
     let path = bridge_path(home);
-    let token = shell_quote(&token_file.to_string_lossy());
-    let allowed_agents = adapters()
-        .iter()
-        .map(|adapter| adapter.id.as_str())
-        .collect::<Vec<_>>()
-        .join("|");
-    let script = format!(
-        "#!/bin/sh\nagent=\"$1\"\ncase \"$agent\" in {allowed_agents}) ;; *) exit 0 ;; esac\ntoken=$(/bin/cat {token})\n/usr/bin/curl --silent --max-time 1 --output /dev/null --header \"content-type: application/json\" --header \"x-agent-deck-token: $token\" --header \"x-agent-deck-pid: $PPID\" --header \"x-agent-deck-herdr-socket: $HERDR_SOCKET_PATH\" --header \"x-agent-deck-herdr-pane: $HERDR_PANE_ID\" --header \"x-agent-deck-tmux: $TMUX\" --header \"x-agent-deck-tmux-pane: $TMUX_PANE\" --request POST --data-binary @- \"http://127.0.0.1:34115/api/hooks/$agent\" 2>/dev/null || true\nexit 0\n"
-    );
-    fs::write(&path, script).map_err(|error| format!("failed to write hook bridge: {error}"))?;
-    set_mode(&path, 0o700)?;
+    #[cfg(not(windows))]
+    {
+        let token = shell_quote(&token_file.to_string_lossy());
+        let allowed_agents = adapters()
+            .iter()
+            .map(|adapter| adapter.id.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
+        let script = format!(
+            "#!/bin/sh\nagent=\"$1\"\ncase \"$agent\" in {allowed_agents}) ;; *) exit 0 ;; esac\ntoken=$(/bin/cat {token})\n/usr/bin/curl --silent --max-time 1 --output /dev/null --header \"content-type: application/json\" --header \"x-agent-deck-token: $token\" --header \"x-agent-deck-pid: $PPID\" --header \"x-agent-deck-herdr-socket: $HERDR_SOCKET_PATH\" --header \"x-agent-deck-herdr-pane: $HERDR_PANE_ID\" --header \"x-agent-deck-tmux: $TMUX\" --header \"x-agent-deck-tmux-pane: $TMUX_PANE\" --request POST --data-binary @- \"http://127.0.0.1:34115/api/hooks/$agent\" 2>/dev/null || true\nexit 0\n"
+        );
+        fs::write(&path, script)
+            .map_err(|error| format!("failed to write hook bridge: {error}"))?;
+        set_mode(&path, 0o700)?;
+    }
+    #[cfg(windows)]
+    {
+        let allowed_agents = adapters()
+            .iter()
+            .map(|adapter| format!("'{}'", adapter.id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let token_literal = ps_single_quote(&token_file.to_string_lossy());
+        let script = format!(
+            r#"$ErrorActionPreference = 'SilentlyContinue'
+$agent = $args[0]
+if (@({allowed_agents}) -notcontains $agent) {{ exit 0 }}
+$token = [IO.File]::ReadAllText({token_literal}).Trim()
+$hookPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+if (-not $hookPid) {{ $hookPid = $PID }}
+$body = [Console]::In.ReadToEnd()
+$headers = @{{
+    'x-agent-deck-token' = $token
+    'x-agent-deck-pid' = "$hookPid"
+}}
+try {{
+    Invoke-RestMethod -Uri "http://127.0.0.1:34115/api/hooks/$agent" -Method Post `
+        -ContentType 'application/json; charset=utf-8' -Headers $headers `
+        -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 2 | Out-Null
+}} catch {{ }}
+exit 0
+"#
+        );
+        fs::write(&path, script)
+            .map_err(|error| format!("failed to write hook bridge: {error}"))?;
+    }
     Ok(path)
 }
 
@@ -157,11 +197,41 @@ pub fn refresh_bridge_if_present() -> Result<(), String> {
     Ok(())
 }
 
+fn ps_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(not(windows))]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+#[cfg(windows)]
+fn bridge_command(bridge: &Path, agent_id: &str) -> String {
+    format!(
+        "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{}\" {agent_id}",
+        bridge.display()
+    )
+}
+
+#[cfg(not(windows))]
+fn bridge_command(bridge: &Path, agent_id: &str) -> String {
+    format!("{} {}", shell_quote(&bridge.to_string_lossy()), agent_id)
+}
+
 fn handler(adapter: &HookAdapter, bridge: &Path) -> Value {
+    #[cfg(windows)]
+    {
+        // A `.ps1` file is not directly executable; every manifest format
+        // receives the same fully-resolved PowerShell command instead.
+        return json!({
+            "type": "command",
+            "command": bridge_command(bridge, &adapter.id),
+            "async": true,
+            "timeout": 2
+        });
+    }
+    #[cfg(not(windows))]
     if adapter.handler_format == "claude" {
         json!({
             "type": "command",
@@ -173,7 +243,7 @@ fn handler(adapter: &HookAdapter, bridge: &Path) -> Value {
     } else if adapter.handler_format == "qwen" {
         json!({
             "type": "command",
-            "command": format!("{} {}", shell_quote(&bridge.to_string_lossy()), adapter.id),
+            "command": bridge_command(bridge, &adapter.id),
             "name": format!("Agent Deck Companion ({})", adapter.id),
             "async": true,
             "timeout": 2000
@@ -181,7 +251,7 @@ fn handler(adapter: &HookAdapter, bridge: &Path) -> Value {
     } else {
         json!({
             "type": "command",
-            "command": format!("{} {}", shell_quote(&bridge.to_string_lossy()), adapter.id),
+            "command": bridge_command(bridge, &adapter.id),
             "timeout": 2
         })
     }
@@ -199,7 +269,7 @@ fn is_ours(value: &Value, bridge: &Path) -> bool {
     // bridge with one supported agent, never because a script mentions a marker.
     adapters()
         .iter()
-        .any(|adapter| command == format!("{} {}", shell_quote(&path), adapter.id))
+        .any(|adapter| command == bridge_command(bridge, &adapter.id))
 }
 
 fn remove_ours(value: &mut Value, bridge: &Path) {
@@ -517,9 +587,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(handlers.len(), adapter("qoder").unwrap().events.len());
         // The bridge routes by its argument, so every handler must pass `qoder`.
-        assert!(handlers
-            .iter()
-            .all(|handler| handler["args"].as_array().unwrap()[0] == "qoder"));
+        assert!(handlers.iter().all(|handler| {
+            handler["args"].as_array().and_then(|args| args.first()) == Some(&json!("qoder"))
+                || handler["command"]
+                    .as_str()
+                    .is_some_and(|command| command.trim_end().ends_with(" qoder"))
+        }));
 
         fs::remove_dir_all(home).unwrap();
     }

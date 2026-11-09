@@ -5,7 +5,7 @@
 **A local-first desktop panel that keeps every AI coding agent on your machine in view — no hardware required.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://github.com/xuan-team/agent-deck-companion)
+[![Platform: macOS | Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/xuan-team/agent-deck-companion)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)](https://tauri.app)
 [![Back us on Kickstarter](https://img.shields.io/badge/Kickstarter-back%20us-05ce78?logo=kickstarter&logoColor=white)](https://www.kickstarter.com/projects/agentdeck/agentdeck-the-physical-control-deck-for-ai-coding-agents)
 
@@ -14,7 +14,8 @@ blocked waiting for you, and which one just produced a new result. Companion wat
 small panel and drops you back into the exact session with a click. It is a control surface for your
 agents — not an IDE.
 
-> **Status:** macOS only today. Windows and Linux are planned, but not yet supported or validated.
+> **Status:** macOS is the primary validated platform. Windows is supported as a preview
+> (build, process detection, hooks, session panel and window focusing); Linux is planned.
 > Built with Tauri 2, Rust, SvelteKit and TypeScript.
 
 ---
@@ -88,7 +89,8 @@ the bundled `dsh-deck-bridge` plugin. See [`doc/`](doc/) for per-agent notes.
 
 ### Prerequisites
 
-- macOS (Apple Silicon validated; Intel needs a separate build). Windows and Linux are planned.
+- macOS (Apple Silicon validated; Intel needs a separate build) or Windows 10/11.
+  Linux is planned.
 - Node.js 20+ and npm
 - Rust stable
 - [Tauri 2 system dependencies](https://tauri.app/start/prerequisites/) for your platform
@@ -114,14 +116,25 @@ npm run tauri:dev
 
 Regular users do not need to enable ESP32 hardware support or configure A1–A5 / K1–K10 keys.
 
-### Build the macOS app
+### Build the desktop app
+
+macOS:
 
 ```bash
 npm run tauri:build -- --bundles app
 ```
 
-The bundle is written to `src-tauri/target/release/bundle/macos/`. Builds are ad-hoc signed, so you
-may need to re-grant permissions after rebuilding. See the
+Windows (NSIS installer and MSI):
+
+```powershell
+npm run tauri:build
+```
+
+Windows is a preview platform; see [Windows notes](doc/windows.md) for what
+works and the remaining macOS-only integrations.
+
+On macOS the bundle is written to `src-tauri/target/release/bundle/macos/`. Builds are ad-hoc
+signed, so you may need to re-grant permissions after rebuilding. See the
 [macOS release guide](doc/macos_release.md).
 
 Tagged releases (`v*`) are built by GitHub Actions into a universal DMG and published on the

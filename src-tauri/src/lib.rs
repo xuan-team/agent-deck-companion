@@ -28,7 +28,6 @@ pub mod glyph_txn;
 #[cfg(target_os = "macos")]
 mod hardware_hid;
 mod hardware_mode;
-#[cfg(target_os = "macos")]
 mod herdr;
 mod hook_integration;
 mod hooks;
@@ -51,6 +50,8 @@ mod state;
 mod tmux;
 mod tray;
 pub mod vendor_hid;
+#[cfg(windows)]
+mod win_focus;
 
 use state::{emit_state, now_ms, AgentStatus, AppRuntime, DeviceEvent};
 
@@ -107,7 +108,7 @@ pub fn process_event(
                 } else if !already_active || event.kind == "agent_key_primed" {
                     activation::activate_agent(&agent_id, app, state);
                 } else {
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", windows))]
                     activation::refocus_agent(&agent_id, state);
                 }
             } else {
@@ -145,6 +146,16 @@ fn adjust_reasoning_level(delta: i32, app: &AppHandle, state: &Arc<AppRuntime>) 
         let state = state.clone();
         thread::spawn(move || sync_chatgpt_reasoning(&app, &state));
     } else {
+        let mut snapshot = state.snapshot.write().unwrap_or_else(|poisoned| {
+            eprintln!("[state] snapshot write lock poisoned, recovering");
+            poisoned.into_inner()
+        });
+        snapshot.device.reasoning_sync = "idle".into();
+    }
+    // The ChatGPT encoder bridge is macOS-only; elsewhere the knob still moves
+    // the deck's local reasoning indicator without a desktop integration.
+    #[cfg(not(target_os = "macos"))]
+    {
         let mut snapshot = state.snapshot.write().unwrap_or_else(|poisoned| {
             eprintln!("[state] snapshot write lock poisoned, recovering");
             poisoned.into_inner()

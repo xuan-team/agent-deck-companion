@@ -318,6 +318,14 @@ pub fn start(app: tauri::AppHandle, state: Arc<AppRuntime>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Activity persistence shells out to the `sqlite3` CLI, which is not
+    /// installed on every Windows machine. The runtime degrades to a cache-less
+    /// session there; the round-trip tests can only run when the CLI exists.
+    fn sqlite_available() -> bool {
+        Command::new("sqlite3").arg("-version").output().is_ok()
+    }
+
     #[test]
     fn unsafe_terminal_output_is_rejected_without_making_a_session_active() {
         let r = Runtime::default();
@@ -336,6 +344,9 @@ mod tests {
 
     #[test]
     fn loading_legacy_samples_clears_only_unsafe_output_and_keeps_confirmed_keys() {
+        if !sqlite_available() {
+            return;
+        }
         let root =
             std::env::temp_dir().join(format!("deck-legacy-activity-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
@@ -438,6 +449,9 @@ mod tests {
     }
     #[test]
     fn sqlite_restores_evidenced_time_without_turning_restart_into_activity() {
+        if !sqlite_available() {
+            return;
+        }
         let root = std::env::temp_dir().join(format!("deck-activity-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("activity.sqlite");

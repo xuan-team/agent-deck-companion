@@ -321,10 +321,52 @@ fn spawn_agent_focus(
     });
 }
 
+/// Windows focus is window-based: a CLI agent has no multiplexer to address,
+/// so the process id, its ancestry and the terminal title are resolved into a
+/// top-level window. DSH's web profile opens in the default browser instead.
+#[cfg(windows)]
+fn spawn_agent_focus(
+    agent_id: &str,
+    state: &Arc<AppRuntime>,
+    pid: Option<u32>,
+    executable: String,
+    preferred_cwd: Option<String>,
+    _status: AgentStatus,
+) {
+    let agent_id = agent_id.to_string();
+    let focus_generation = state.focus_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let focus_state = state.clone();
+    let mut hints = state
+        .plugins
+        .get(&agent_id)
+        .map(|plugin| plugin.terminal_title_hints.clone())
+        .unwrap_or_default();
+    if !executable.is_empty() {
+        hints.push(executable);
+    }
+    thread::spawn(move || {
+        let _focus = focus_state
+            .focus_lock
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if focus_state.focus_generation.load(Ordering::SeqCst) != focus_generation {
+            return;
+        }
+        if agent_id == "dsh" {
+            if let Some(url) = dsh::web_url(&System::new_all()) {
+                crate::win_focus::open_url(&url);
+                return;
+            }
+        }
+        let focused = crate::win_focus::focus_process_window(pid, &hints, preferred_cwd.as_deref());
+        eprintln!("[activate] windows focus agent={agent_id} pid={pid:?} focused={focused}");
+    });
+}
+
 /// Re-run window focus for an agent that is already active, without mutating
 /// activation state. Pressing the same deck key should raise the agent's
 /// window even when the companion already considers it active.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub fn refocus_agent(agent_id: &str, state: &Arc<AppRuntime>) {
     let (pid, executable, preferred_cwd, status) = {
         let snapshot = state.snapshot.read().unwrap_or_else(|poisoned| {
@@ -412,7 +454,7 @@ pub fn activate_agent(agent_id: &str, app: &AppHandle, state: &Arc<AppRuntime>) 
     }
     let (pid, executable, preferred_cwd, status) = select_agent_state(agent_id, state);
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     spawn_agent_focus(agent_id, state, pid, executable, preferred_cwd, status);
 
     tray::refresh_tray_menu(app, state);
@@ -636,7 +678,6 @@ pub fn focus_session(session_index: usize, state: &Arc<AppRuntime>) {
 
 /// The result of opening one floating-panel row, so the UI can tell the user
 /// why a click did not light up the target window.
-#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenOutcome {
@@ -699,6 +740,139 @@ pub fn open_session_request(
     generation: u64,
 ) -> OpenOutcome {
     open_session_with(state, identity, generation, activate_panel_while_current)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn open_session_request(
+    _state: &Arc<AppRuntime>,
+    _identity: &str,
+    _generation: u64,
+) -> OpenOutcome {
+    OpenOutcome::FocusFailed
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn open_notification_request(
+    _state: &Arc<AppRuntime>,
+    _identity: &str,
+    _generation: u64,
+    _expected: (crate::state::AttentionClass, u128),
+) -> OpenOutcome {
+    OpenOutcome::FocusFailed
+}
+
+/// Windows has no multiplexer transports, so opening a row means raising the
+/// owning window (or handing a web/desktop URL to the default browser). The
+/// acknowledgement rules stay the same as the macOS path: only the exact
+/// session version that was opened is cleared.
+#[cfg(windows)]
+fn open_session_windows(
+    state: &Arc<AppRuntime>,
+    identity: &str,
+    generation: u64,
+    expected: Option<(crate::state::AttentionClass, u128)>,
+) -> OpenOutcome {
+    thread::sleep(Duration::from_millis(100));
+    let _focus = state.focus_lock.lock().unwrap_or_else(|p| p.into_inner());
+    let current = || state.focus_generation.load(Ordering::SeqCst) == generation;
+    if !current() {
+        return OpenOutcome::Superseded;
+    }
+    let panel = {
+        let snapshot = state.snapshot.read().unwrap_or_else(|p| p.into_inner());
+        if expected.is_some_and(|(kind, version)| {
+            !crate::notifications::matches_event(
+                &state.desktop_rows(&snapshot),
+                identity,
+                kind,
+                version,
+            )
+        }) {
+            return OpenOutcome::Superseded;
+        }
+        let Some(panel) = lookup_panel_by_identity(&snapshot, identity) else {
+            return OpenOutcome::TargetGone;
+        };
+        panel
+    };
+    let hints = state
+        .plugins
+        .get(&panel.agent_id)
+        .map(|plugin| plugin.terminal_title_hints.clone())
+        .unwrap_or_default();
+    let raised = match &panel.transport {
+        PanelTransport::Terminal { pid } => {
+            crate::win_focus::focus_process_window(Some(*pid), &hints, panel.cwd.as_deref())
+        }
+        PanelTransport::DshWeb { .. } => {
+            dsh::web_url(&System::new_all()).is_some_and(|url| crate::win_focus::open_url(&url))
+        }
+        PanelTransport::CodexThread { thread_id } => {
+            crate::win_focus::open_url(&format!("codex://threads/{thread_id}"))
+        }
+        // Herdr and tmux use Unix sockets and have no Windows backend.
+        PanelTransport::Herdr { .. } | PanelTransport::Tmux { .. } | PanelTransport::Unknown => {
+            false
+        }
+    };
+    if !current() {
+        return OpenOutcome::Superseded;
+    }
+    if !raised {
+        return OpenOutcome::FocusFailed;
+    }
+    let mut snapshot = state.snapshot.write().unwrap_or_else(|p| p.into_inner());
+    if !current() {
+        return OpenOutcome::Superseded;
+    }
+    if expected.is_some_and(|(kind, version)| {
+        !crate::notifications::matches_event(
+            &state.desktop_rows(&snapshot),
+            identity,
+            kind,
+            version,
+        )
+    }) {
+        return OpenOutcome::Superseded;
+    }
+    let Some(live) = lookup_panel_by_identity(&snapshot, identity) else {
+        return OpenOutcome::TargetGone;
+    };
+    if live.session_id != panel.session_id {
+        return OpenOutcome::TargetGone;
+    }
+    if let Ok(mut focused_panels) = state.focused_panels.lock() {
+        focused_panels.insert(panel.agent_id.clone(), identity.to_owned());
+    }
+    acknowledge_session_unread(&mut snapshot, identity, &panel);
+    snapshot.active_agent = Some(panel.agent_id.clone());
+    snapshot.active_surface = Some(assumed_surface(&panel.agent_id, &state.plugins));
+    for agent in &mut snapshot.agents {
+        agent.active = agent.id == panel.agent_id;
+    }
+    snapshot.updated_at_ms = now_ms();
+    drop(snapshot);
+    crate::vendor_hid::request_deck_push(state);
+    OpenOutcome::Opened
+}
+
+#[cfg(windows)]
+pub fn open_session_request(
+    state: &Arc<AppRuntime>,
+    identity: &str,
+    generation: u64,
+) -> OpenOutcome {
+    open_session_windows(state, identity, generation, None)
+}
+
+#[cfg(windows)]
+pub fn open_notification_request(
+    state: &Arc<AppRuntime>,
+    identity: &str,
+    generation: u64,
+    expected: (crate::state::AttentionClass, u128),
+) -> OpenOutcome {
+    open_session_windows(state, identity, generation, Some(expected))
 }
 
 #[cfg(target_os = "macos")]

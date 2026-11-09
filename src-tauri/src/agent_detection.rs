@@ -10,6 +10,33 @@ use std::path::Path;
 
 use sysinfo::System;
 
+/// Compare an executable name without its Windows `.exe` suffix.
+///
+/// Windows process tables report `codex.exe`, while plugin manifests and
+/// detection patterns name the bare command. Both sides are normalized so one
+/// manifest matches on every platform.
+pub fn executable_name_matches(actual: &str, expected: &str) -> bool {
+    fn stem(name: &str) -> &str {
+        let name = name.trim();
+        let bytes = name.as_bytes();
+        if bytes.len() > 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".exe") {
+            &name[..name.len() - 4]
+        } else {
+            name
+        }
+    }
+    stem(actual).eq_ignore_ascii_case(stem(expected))
+}
+
+/// Match a command-line argument against a manifest pattern.
+///
+/// Windows command lines use backslashes, so patterns written for POSIX paths
+/// (`/@qwen-code/qwen-code/`) are also tried against a forward-slash copy.
+pub fn argv_contains(argv: &[String], pattern: &str) -> bool {
+    argv.iter()
+        .any(|arg| arg.contains(pattern) || arg.replace('\\', "/").contains(pattern))
+}
+
 /// Declarative process-match description for one agent.
 ///
 /// A process matches when **any** of the positive signals fire **and** none of
@@ -30,17 +57,17 @@ pub struct DetectionPattern {
 impl DetectionPattern {
     fn matches(&self, process: &sysinfo::Process) -> bool {
         let name = process.name().to_string_lossy();
-        let arguments: Vec<_> = process
+        let arguments = process
             .cmd()
             .iter()
-            .map(|arg| arg.to_string_lossy())
-            .collect();
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
 
         // Exclusion check first — cheaper and avoids false positives.
         if self
             .exclude_argv_patterns
             .iter()
-            .any(|pattern| arguments.iter().any(|arg| arg.contains(pattern)))
+            .any(|pattern| argv_contains(&arguments, pattern))
         {
             return false;
         }
@@ -49,7 +76,7 @@ impl DetectionPattern {
         if self
             .executable_names
             .iter()
-            .any(|expected| name.eq_ignore_ascii_case(expected))
+            .any(|expected| executable_name_matches(&name, expected))
         {
             return true;
         }
@@ -58,7 +85,7 @@ impl DetectionPattern {
         if self
             .argv_patterns
             .iter()
-            .any(|pattern| arguments.iter().any(|arg| arg.contains(pattern)))
+            .any(|pattern| argv_contains(&arguments, pattern))
         {
             return true;
         }
@@ -66,12 +93,12 @@ impl DetectionPattern {
         // Argument filename match (skip URL-like arguments).
         if arguments.iter().any(|arg| {
             !arg.contains("://")
-                && Path::new(arg.as_ref())
+                && Path::new(arg.as_str())
                     .file_name()
                     .is_some_and(|file_name| {
-                        self.argv_filename_names
-                            .iter()
-                            .any(|expected| file_name.eq_ignore_ascii_case(expected))
+                        self.argv_filename_names.iter().any(|expected| {
+                            executable_name_matches(&file_name.to_string_lossy(), expected)
+                        })
                     })
         }) {
             return true;
@@ -105,7 +132,7 @@ fn built_in_pattern(agent_id: &str) -> Option<&'static DetectionPattern> {
     };
     static CLAUDE: DetectionPattern = DetectionPattern {
         executable_names: &["claude"],
-        argv_patterns: &[],
+        argv_patterns: &["@anthropic-ai/claude-code", "claude-code/cli.js"],
         argv_filename_names: &["claude"],
         exclude_argv_patterns: &[],
     };
@@ -147,7 +174,7 @@ pub fn process_matches(process: &sysinfo::Process, agent_id: &str, executable: &
     }
     // Generic fallback: match the configured executable name.
     let name = process.name().to_string_lossy();
-    if name.eq_ignore_ascii_case(executable) {
+    if executable_name_matches(&name, executable) {
         return true;
     }
     process
@@ -155,7 +182,7 @@ pub fn process_matches(process: &sysinfo::Process, agent_id: &str, executable: &
         .iter()
         .filter(|part| !part.to_string_lossy().contains("://"))
         .filter_map(|part| Path::new(part).file_name())
-        .any(|file_name| file_name.to_string_lossy().eq_ignore_ascii_case(executable))
+        .any(|file_name| executable_name_matches(&file_name.to_string_lossy(), executable))
 }
 
 /// Read an environment variable value from a process's `/proc`-style environ.
@@ -324,4 +351,28 @@ fn find_tmux_client_terminal(system: &System) -> Option<&'static str> {
         current = process.parent()?;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{argv_contains, executable_name_matches};
+
+    #[test]
+    fn executable_names_ignore_the_windows_extension() {
+        assert!(executable_name_matches("codex.exe", "codex"));
+        assert!(executable_name_matches("CODEX.EXE", "codex"));
+        assert!(executable_name_matches("codex", "codex.exe"));
+        assert!(!executable_name_matches("codex-cli.exe", "codex"));
+    }
+
+    #[test]
+    fn argv_patterns_accept_windows_separators() {
+        let argv = vec![
+            "node.exe".into(),
+            r"C:\Users\me\AppData\Roaming\npm\node_modules\@qwen-code\qwen-code\lib\cli-entry.js"
+                .into(),
+        ];
+        assert!(argv_contains(&argv, "@qwen-code/qwen-code/"));
+        assert!(!argv_contains(&argv, "@qwen-code/claude-code/"));
+    }
 }

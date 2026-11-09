@@ -361,16 +361,19 @@ AppConfig (version 3)
 
 ## Platform-Specific Code
 
-All macOS-gated code uses `#[cfg(target_os = "macos")]`:
+All macOS-gated code uses `#[cfg(target_os = "macos")]`; Windows path handling is under
+`#[cfg(windows)]`.
 
-| Module | macOS APIs Used |
-|--------|----------------|
-| `hardware_hid.rs` | CGEventTap (keyboard event interception) |
-| `macos_input.rs` | CGEvent (key injection), Accessibility API |
-| `herdr.rs` | Unix sockets (Herdr IPC) |
-| `tmux.rs` | tmux command protocol |
-| `agent_detection.rs` | AppleScript (window focus), process inspection |
-| `activation.rs` | `open -b` (app launch), AppleScript (browser tab focus) |
+| Module | macOS APIs Used | Windows replacement |
+|--------|----------------|---------------------|
+| `hardware_hid.rs` | CGEventTap (keyboard event interception) | Not implemented (vendor HID still works) |
+| `macos_input.rs` | CGEvent (key injection), Accessibility API | Not implemented |
+| `herdr.rs` | Unix sockets (Herdr IPC) | Returns empty snapshots; Herdr rows stay offline |
+| `tmux.rs` | tmux command protocol | Not implemented |
+| `agent_detection.rs` | AppleScript (window focus), process inspection | Process inspection via sysinfo; `.exe`/path normalization |
+| `activation.rs` | `open -b` (app launch), AppleScript (browser tab focus) | `win_focus.rs`: Win32 window activation + `ShellExecuteW` |
+| `hook_integration.rs` | `/bin/sh` + `curl` bridge | PowerShell bridge (`agent-deck-hook.ps1`) |
+| `dsh_plugin.rs` | `npx` resolved through `/bin/zsh` | `where.exe npx` + `cmd.exe /C` for `.cmd` shims |
 
 ---
 

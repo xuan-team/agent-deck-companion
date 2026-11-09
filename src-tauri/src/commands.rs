@@ -18,7 +18,6 @@ pub fn get_state(state: tauri::State<'_, Arc<AppRuntime>>) -> crate::state::AppS
     state.read()
 }
 
-#[cfg(target_os = "macos")]
 #[tauri::command]
 pub fn herdr_agent_action(
     pane_id: String,
@@ -34,7 +33,6 @@ pub fn herdr_agent_action(
 /// Open one desktop-session row by its stable identity. The raise happens on
 /// a blocking thread; the UI gets the final outcome back so a failed open can
 /// keep its unread light.
-#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn open_desktop_session(
     identity: String,

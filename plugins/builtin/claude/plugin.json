@@ -3,7 +3,10 @@
   "id": "claude",
   "display_name": "Claude Code",
   "built_in": true,
-  "detection": { "process_names": ["claude"] },
+  "detection": {
+    "process_names": ["claude"],
+    "argv_patterns": ["@anthropic-ai/claude-code", "claude-code/cli.js"]
+  },
   "surfaces": ["terminal"],
   "default_surface": "terminal",
   "hooks": {

@@ -731,7 +731,6 @@ pub struct AppSnapshot {
     pub attention_count: usize,
     pub attention_urgent: usize,
     pub chatgpt_usage: ChatGptUsage,
-    #[cfg(target_os = "macos")]
     pub herdr: crate::herdr::HerdrSnapshot,
     /// Floating-panel projection over all monitored sessions; independent of
     /// `sessions`, which remains the current agent's three-row LCD projection.
@@ -1008,7 +1007,6 @@ impl AppRuntime {
                     native_encoder: chatgpt_state::native_encoder_available(),
                     encoder_mode: chatgpt_state::encoder_mode(),
                 },
-                #[cfg(target_os = "macos")]
                 herdr: crate::herdr::HerdrSnapshot::default(),
                 desktop_sessions: Vec::new(),
                 desktop_summary: DesktopSummary::default(),
@@ -3000,6 +2998,7 @@ mod tests {
             "the navigation projection drops identity-less rows"
         );
     }
+    #[cfg(target_os = "macos")]
     #[test]
     fn different_herdr_sockets_have_distinct_focus_keys() {
         let first = herdr_row("pane", AgentStatus::Working);

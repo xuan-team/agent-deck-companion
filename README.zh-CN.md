@@ -5,7 +5,7 @@
 **本地优先的桌面面板，把电脑上的每个 AI Coding Agent 都收拢在一处 —— 无需任何硬件。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](https://github.com/xuan-team/agent-deck-companion)
+[![Platform: macOS | Windows](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/xuan-team/agent-deck-companion)
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)](https://tauri.app)
 [![Back us on Kickstarter](https://img.shields.io/badge/Kickstarter-back%20us-05ce78?logo=kickstarter&logoColor=white)](https://www.kickstarter.com/projects/agentdeck/agentdeck-the-physical-control-deck-for-ai-coding-agents)
 
@@ -13,8 +13,8 @@
 Companion 用一块小面板把这些状态集中呈现，点一下即可回到那个会话本身。它是 Agent 的控制面，
 不是 IDE。
 
-> **状态**：目前仅支持 macOS；Windows 与 Linux 计划中，尚未支持或验证。
-> 采用 Tauri 2、Rust、SvelteKit 和 TypeScript。
+> **状态**：macOS 是主要验证平台。Windows 以预览状态支持（构建、进程检测、Hooks、会话浮窗与窗口
+> 聚焦）；Linux 计划中。采用 Tauri 2、Rust、SvelteKit 和 TypeScript。
 
 ---
 
@@ -78,7 +78,7 @@ CLI Agent 通过显式安装的 hooks 上报生命周期状态；DeepSeek Harnes
 
 ### 前置条件
 
-- macOS（已验证 Apple Silicon；Intel 需另行构建验证）；Windows 与 Linux 计划中。
+- macOS（已验证 Apple Silicon；Intel 需另行构建验证）或 Windows 10/11；Linux 计划中。
 - Node.js 20+ 与 npm
 - Rust stable
 - 对应平台的 [Tauri 2 系统构建依赖](https://tauri.app/start/prerequisites/)
@@ -102,14 +102,24 @@ npm run tauri:dev
 
 普通用户不需要启用 ESP32 硬件支持，也不需要配置 A1–A5 或 K1–K10。
 
-### 构建 macOS 应用
+### 构建桌面应用
+
+macOS：
 
 ```bash
 npm run tauri:build -- --bundles app
 ```
 
-构建产物位于 `src-tauri/target/release/bundle/macos/`。当前采用 ad-hoc 签名，重新构建后可能需要
-重新授权；构建、签名与分发说明见 [macOS 发布指南](doc/macos_release.md)。
+Windows（NSIS 安装包与 MSI）：
+
+```powershell
+npm run tauri:build
+```
+
+Windows 目前为预览支持，功能范围与仍仅限 macOS 的部分见 [Windows 说明](doc/windows.md)。
+
+macOS 构建产物位于 `src-tauri/target/release/bundle/macos/`。当前采用 ad-hoc 签名，重新构建后
+可能需要重新授权；构建、签名与分发说明见 [macOS 发布指南](doc/macos_release.md)。
 
 推送 `v*` tag 时，GitHub Actions 会构建 Apple Silicon + Intel 的 universal DMG 并发布到
 [Releases](https://github.com/xuan-team/agent-deck-companion/releases)。该构建只有 ad-hoc 签名、

@@ -165,6 +165,26 @@ pub fn resolve_npx() -> Result<PathBuf, String> {
         }
         return Err(format!("AGENT_DECK_NPX does not exist: {}", path.display()));
     }
+    #[cfg(windows)]
+    if let Ok(output) = Command::new("where.exe").arg("npx").output() {
+        if output.status.success() {
+            // `where` lists the shims; prefer a native executable or the
+            // cmd shim, which run_npx knows how to launch.
+            let resolved = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .find(|line| {
+                    let lower = line.to_ascii_lowercase();
+                    lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat")
+                })
+                .map(PathBuf::from);
+            if let Some(resolved) = resolved {
+                return Ok(resolved);
+            }
+        }
+    }
+    #[cfg(not(windows))]
     if let Ok(output) = Command::new("/bin/zsh")
         .args(["-lc", "command -v npx"])
         .stdin(Stdio::null())
@@ -179,12 +199,34 @@ pub fn resolve_npx() -> Result<PathBuf, String> {
     }
     // Last resort: a bare name still works when the app was launched from a
     // shell that carries the user's PATH.
+    #[cfg(windows)]
+    return Ok(PathBuf::from("npx.cmd"));
+    #[cfg(not(windows))]
     Ok(PathBuf::from("npx"))
+}
+
+fn npx_command(npx: &Path) -> Command {
+    #[cfg(windows)]
+    {
+        // `.cmd` shims are not executable images; CreateProcess needs cmd.exe.
+        let is_shim = npx
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+            });
+        if is_shim {
+            let mut command = Command::new("cmd.exe");
+            command.arg("/C").arg(npx);
+            return command;
+        }
+    }
+    Command::new(npx)
 }
 
 /// Run `npx` with a hard deadline so a wedged installer cannot pin the app.
 fn run_npx(npx: &Path, argv: &[String]) -> Result<String, String> {
-    let mut child = Command::new(npx)
+    let mut child = npx_command(npx)
         .args(argv)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
