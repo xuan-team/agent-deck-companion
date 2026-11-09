@@ -186,7 +186,6 @@ pub(crate) fn refresh_live_agent_statuses(snapshot: &mut AppSnapshot) {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn session_is_focused(
     panel: &ActivePanel,
     herdr: &crate::herdr::HerdrSnapshot,
@@ -429,12 +428,9 @@ pub(crate) fn herdr_target_missing(snapshot: &AppSnapshot, transport: &PanelTran
     };
     // The snapshot describes the default server only. Never use its pane list
     // to invalidate a target on another socket, or while disconnected.
-    #[cfg(target_os = "macos")]
     if !crate::herdr::socket_paths_match(socket_path.as_deref(), None) {
         return false;
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = socket_path;
     snapshot.herdr.connected
         && !snapshot
             .herdr
@@ -1290,13 +1286,8 @@ impl AppRuntime {
             .into_iter()
             .take(3)
             .map(|panel| {
-                #[cfg(target_os = "macos")]
                 let focused =
                     session_is_focused(panel, &snapshot.herdr, focused_panel_key.as_deref());
-                #[cfg(not(target_os = "macos"))]
-                let focused = focused_panel_key
-                    .as_deref()
-                    .is_some_and(|key| panel_focus_key(panel).as_deref() == Some(key));
                 AgentSession {
                     id: panel.id.clone(),
                     label: panel.label.clone(),

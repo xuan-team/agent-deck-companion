@@ -7,6 +7,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use std::{
+    io::{BufRead, BufReader, Write},
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
+
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
@@ -98,7 +105,8 @@ pub fn find_target(
 ) -> Option<HerdrTarget> {
     let system = System::new_all();
 
-    // First, look for pane-specific targets (processes with HERDR_PANE_ID).
+    // First, look for pane-specific targets (processes with HERDR_PANE_ID or
+    // herdr-core's HC_TERMINAL_ID).
     let candidates = system.processes().iter().filter_map(|(pid, process)| {
         let plugin_match = plugins.is_some_and(|registry| {
             registry.process_matches(
@@ -114,12 +122,14 @@ pub fn find_target(
         if !agent_detection::process_matches(process, agent_id, executable) && !plugin_match {
             return None;
         }
-        let pane_id = agent_detection::environment_value(process, "HERDR_PANE_ID")?;
+        let pane_id = agent_detection::environment_value(process, "HERDR_PANE_ID")
+            .or_else(|| agent_detection::environment_value(process, "HC_TERMINAL_ID"))?;
         Some(Candidate {
             pane_id,
             tab_id: agent_detection::environment_value(process, "HERDR_TAB_ID"),
             workspace_id: agent_detection::environment_value(process, "HERDR_WORKSPACE_ID"),
-            socket_path: agent_detection::environment_value(process, "HERDR_SOCKET_PATH"),
+            socket_path: agent_detection::environment_value(process, "HERDR_SOCKET_PATH")
+                .or_else(|| agent_detection::environment_value(process, "HC_TERMINAL_SOCKET")),
             pid: pid.as_u32(),
             cwd: process.cwd().map(|cwd| cwd.to_string_lossy().into_owned()),
             start_time: process.start_time(),
@@ -135,8 +145,10 @@ pub fn find_target(
         });
     }
 
-    // For the "herdr" agent itself, the herdr client process is a valid
-    // target even without HERDR_PANE_ID — it's the multiplexer controller.
+    // For the legacy "herdr" agent itself, the client process is a valid
+    // target even without a pane id. herdr-core's app window is raised by
+    // `focus_host_window` instead.
+    #[cfg(not(windows))]
     if agent_id == "herdr" {
         let client = system.processes().iter().find(|(_, process)| {
             agent_detection::process_matches(process, "herdr", executable)
@@ -191,6 +203,52 @@ pub fn configured_prefix() -> String {
         .unwrap_or_else(|| DEFAULT_PREFIX.into())
 }
 
+/// Windows herdr-core exposes the same JSON-RPC protocol over a named pipe.
+/// The pipe is named after the OS user and the `hc` session, and every
+/// terminal also carries `HC_TERMINAL_SOCKET`, which is the most reliable
+/// source when the companion was started from inside one.
+#[cfg(windows)]
+fn default_socket_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("HC_TERMINAL_SOCKET") {
+        return Some(PathBuf::from(path));
+    }
+    let user = std::env::var("USERNAME").ok()?;
+    let session = std::env::var("HC_SESSION")
+        .ok()
+        .filter(|session| !session.is_empty())
+        .unwrap_or_else(|| "default".to_owned());
+    let exact = PathBuf::from(format!(r"\\.\pipe\herdr-core-{user}-{session}.sock"));
+    if exact.exists() || pipe_connects(&exact) {
+        return Some(exact);
+    }
+    // A different `hc` session may be the running one. Its data directory name
+    // is the session name, so probe those pipes before giving up.
+    let root = dirs::data_local_dir()?.join("herdr-core");
+    for entry in fs::read_dir(root).ok()?.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let candidate = PathBuf::from(format!(r"\\.\pipe\herdr-core-{user}-{name}.sock"));
+        if pipe_connects(&candidate) {
+            return Some(candidate);
+        }
+    }
+    Some(exact)
+}
+
+#[cfg(windows)]
+fn pipe_connects(path: &std::path::Path) -> bool {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .is_ok()
+}
+
+#[cfg(not(windows))]
 fn default_socket_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("HERDR_SOCKET_PATH") {
         return Some(PathBuf::from(path));
@@ -256,9 +314,148 @@ fn api_request(socket_path: Option<&str>, method: &str, params: Value) -> Result
         .ok_or_else(|| "Herdr response missing result".into())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn api_request(_socket_path: Option<&str>, _method: &str, _params: Value) -> Result<Value, String> {
     Err("Herdr is not available on this platform".into())
+}
+
+/// The Windows core speaks the same one-line JSON-RPC framing, but over a
+/// named pipe. A fresh connection per request keeps this side stateless; the
+/// event subscriber below keeps one connection open.
+#[cfg(windows)]
+fn api_request(socket_path: Option<&str>, method: &str, params: Value) -> Result<Value, String> {
+    let path = socket_path
+        .map(PathBuf::from)
+        .or_else(default_socket_path)
+        .ok_or_else(|| "Herdr pipe unavailable".to_string())?;
+    let file = open_pipe(&path, Duration::from_millis(1200))?;
+    let mut writer = std::io::BufWriter::new(file.try_clone().map_err(|e| e.to_string())?);
+    let request = serde_json::json!({"jsonrpc": "2.0", "id": "agent-deck-companion", "method": method, "params": params});
+    serde_json::to_writer(&mut writer, &request).map_err(|e| e.to_string())?;
+    writer.write_all(b"\n").map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())?;
+    let mut reader = BufReader::new(file);
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+            return Err("Herdr pipe closed before the response".into());
+        }
+        let Ok(response) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let matches_request = response
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id == "agent-deck-companion");
+        if !matches_request {
+            continue;
+        }
+        if let Some(error) = response.get("error") {
+            return Err(error.to_string());
+        }
+        return response
+            .get("result")
+            .cloned()
+            .ok_or_else(|| "Herdr response missing result".into());
+    }
+}
+
+#[cfg(windows)]
+fn open_pipe(path: &std::path::Path, timeout: Duration) -> Result<std::fs::File, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+        {
+            Ok(file) => return Ok(file),
+            Err(error) => {
+                let retryable = matches!(error.raw_os_error(), Some(2) | Some(3) | Some(231));
+                if !retryable || Instant::now() >= deadline {
+                    return Err(format!("connect {}: {error}", path.display()));
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn run_json_command(
+    program: &std::path::Path,
+    args: &[String],
+    timeout: Duration,
+) -> Result<Value, String> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot run {}: {error}", program.display()))?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait().map_err(|error| error.to_string())? {
+            Some(_) => break,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{} timed out", program.display()));
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(stderr.trim().to_owned());
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn app_exe() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("AGENT_DECK_HERDR_APP") {
+        return Some(PathBuf::from(path));
+    }
+    let installed = dirs::data_local_dir().map(|dir| dir.join("Programs/herdr-app/herdr-app.exe"));
+    if let Some(path) = installed.filter(|path| path.is_file()) {
+        return Some(path);
+    }
+    Some(PathBuf::from("herdr-app.exe"))
+}
+
+#[cfg(windows)]
+fn app_pid() -> Option<u32> {
+    let system = System::new_all();
+    system
+        .processes()
+        .iter()
+        .find(|(_, process)| {
+            process
+                .name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("herdr-app.exe")
+                || process
+                    .name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case("herdr-app")
+        })
+        .map(|(pid, _)| pid.as_u32())
+}
+
+#[cfg(windows)]
+fn app_command(command: &str, args: &[(&str, &str)]) -> Result<Value, String> {
+    let program = app_exe().ok_or_else(|| "herdr-app not found".to_string())?;
+    let mut argv = vec!["do".to_owned(), command.to_owned()];
+    for (name, value) in args {
+        argv.push(format!("--{name}"));
+        argv.push((*value).to_owned());
+    }
+    run_json_command(&program, &argv, Duration::from_millis(2000))
 }
 
 /// Subscribe to Herdr lifecycle changes on one persistent socket connection.
@@ -367,6 +564,44 @@ fn subscribe_events_at(path: &std::path::Path, on_change: &mut impl FnMut()) -> 
     }
 }
 
+/// Windows event stream. The core pushes an initial terminal snapshot as the
+/// subscription result and one `event` notification per fact change; pings are
+/// `heartbeat` lines. Bursts are cheap here because the caller re-samples and
+/// only emits when the snapshot actually changed.
+#[cfg(windows)]
+pub fn subscribe_events(mut on_change: impl FnMut()) -> Result<(), String> {
+    let path = default_socket_path().ok_or_else(|| "Herdr pipe unavailable".to_string())?;
+    let file = open_pipe(&path, Duration::from_millis(1200))?;
+    let mut writer = std::io::BufWriter::new(file.try_clone().map_err(|e| e.to_string())?);
+    let request = serde_json::json!({
+        "jsonrpc": "2.0", "id": "agent-deck-events", "method": "events.subscribe", "params": {}
+    });
+    serde_json::to_writer(&mut writer, &request).map_err(|e| e.to_string())?;
+    writer.write_all(b"\n").map_err(|e| e.to_string())?;
+    writer.flush().map_err(|e| e.to_string())?;
+    let mut reader = BufReader::new(file);
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+            return Err("Herdr event stream closed".into());
+        }
+        let Ok(message) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(error) = message.get("error") {
+            return Err(format!("Herdr subscription failed: {error}"));
+        }
+        let method = message.get("method").and_then(Value::as_str);
+        match method {
+            Some("heartbeat") => continue,
+            Some(_) => on_change(),
+            // The first line is the subscribe result: a full snapshot.
+            None if message.get("result").is_some() => on_change(),
+            None => {}
+        }
+    }
+}
+
 fn request_succeeded(target: &HerdrTarget, method: &str, params: Value) -> bool {
     api_request(target.socket_path.as_deref(), method, params).is_ok()
 }
@@ -427,18 +662,333 @@ fn snapshot_agent(
 /// Read Herdr's authoritative, one-shot session snapshot. The parser is
 /// intentionally tolerant so companion releases do not pin a private protocol
 /// shape; unknown fields are ignored and missing display metadata degrades.
+#[cfg(not(windows))]
 pub fn session_snapshot() -> HerdrSnapshot {
     api_request(None, "session.snapshot", serde_json::json!({}))
         .map(|result| parse_session_snapshot(&result))
         .unwrap_or_default()
 }
 
+/// herdr-core's Windows snapshot. `terminal.list` carries the live terminal
+/// facts (agent, status, turn, title, cwd and the `herdr.space`/`herdr.tab`
+/// labels). Focus and pane layout come from herdr-app's own state files; the
+/// public `herdr-app ls`/`status` commands are only a fallback when those
+/// files are absent.
+#[cfg(windows)]
+pub fn session_snapshot() -> HerdrSnapshot {
+    let Ok(result) = api_request(None, "terminal.list", serde_json::json!({})) else {
+        return HerdrSnapshot::default();
+    };
+    let mut snapshot = HerdrSnapshot {
+        connected: true,
+        focused_pane_id: None,
+        agents: result
+            .get("terminals")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(core_terminal_agent)
+            .collect(),
+    };
+    enrich_from_app(&mut snapshot);
+    snapshot
+}
+
+#[cfg(windows)]
+fn core_terminal_agent(item: &Value) -> Option<HerdrAgentInfo> {
+    if item.get("state").and_then(Value::as_str) != Some("live") {
+        return None;
+    }
+    let pane_id = item.get("address").and_then(Value::as_str)?.to_owned();
+    let status = item.get("status")?;
+    let app = status
+        .get("app")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("agent").and_then(Value::as_str))?
+        .trim()
+        .to_ascii_lowercase();
+    if app.is_empty() {
+        return None;
+    }
+    let state = status
+        .get("state")
+        .and_then(Value::as_str)
+        .or_else(|| status.as_str())
+        .unwrap_or("unknown")
+        .to_owned();
+    let labels = item.get("labels");
+    let label = |key: &str| {
+        labels
+            .and_then(|labels| labels.get(key))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let title = item
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            status
+                .get("title")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        });
+    let where_label = label("where");
+    Some(HerdrAgentInfo {
+        native_session_id: None,
+        pane_id,
+        workspace_id: label("herdr.space").unwrap_or_default(),
+        tab_id: label("herdr.tab").unwrap_or_default(),
+        agent: if app == "qodercli" {
+            "qoder".into()
+        } else {
+            app.clone()
+        },
+        display_name: app,
+        status: state.clone(),
+        title: title.clone(),
+        cwd: item
+            .get("cwd")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+        focused: false,
+        attention: matches!(state.as_str(), "blocked" | "done"),
+        state_change_seq: item.get("turn").and_then(Value::as_u64).unwrap_or(0),
+        model: None,
+        summary: where_label.or(title),
+    })
+}
+
+#[cfg(windows)]
+struct AppTerminal {
+    space_id: String,
+    tab_id: String,
+    pane_id: String,
+    name: Option<String>,
+}
+
+#[cfg(windows)]
+fn app_home() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("HERDR_APP_HOME") {
+        return Some(PathBuf::from(path));
+    }
+    dirs::home_dir().map(|home| home.join(".config/herdr-app"))
+}
+
+#[cfg(windows)]
+fn core_session_dir() -> Option<PathBuf> {
+    let session = std::env::var("HC_SESSION")
+        .ok()
+        .filter(|session| !session.is_empty())
+        .unwrap_or_else(|| "default".to_owned());
+    dirs::data_local_dir().map(|dir| dir.join("herdr-core").join(session))
+}
+
+#[cfg(windows)]
+fn file_layout() -> Option<HashMap<String, AppTerminal>> {
+    let path = core_session_dir()?.join("docs.json");
+    let value = serde_json::from_slice::<Value>(&fs::read(path).ok()?).ok()?;
+    parse_docs_layout(&value)
+}
+
+#[cfg(windows)]
+fn parse_docs_layout(value: &Value) -> Option<HashMap<String, AppTerminal>> {
+    let doc = value
+        .get("herdr-app")
+        .and_then(|doc| doc.get("value"))
+        .unwrap_or(value);
+    let mut terminals = HashMap::new();
+    for space in doc
+        .get("spaces")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let space_id = space.get("id").and_then(Value::as_str).unwrap_or_default();
+        for tab in space
+            .get("tabs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let tab_id = tab.get("id").and_then(Value::as_str).unwrap_or_default();
+            if let Some(root) = tab.get("root") {
+                collect_docs_terminal(root, space_id, tab_id, &mut terminals);
+            }
+        }
+    }
+    (!terminals.is_empty()).then_some(terminals)
+}
+
+#[cfg(windows)]
+fn collect_docs_terminal(
+    node: &Value,
+    space_id: &str,
+    tab_id: &str,
+    terminals: &mut HashMap<String, AppTerminal>,
+) {
+    if let Some(terminal) = node
+        .get("content")
+        .and_then(|content| content.get("terminal"))
+        .and_then(Value::as_str)
+    {
+        if let Some(pane_id) = node.get("id").and_then(Value::as_str) {
+            terminals.insert(
+                terminal.to_owned(),
+                AppTerminal {
+                    space_id: space_id.to_owned(),
+                    tab_id: tab_id.to_owned(),
+                    pane_id: pane_id.to_owned(),
+                    name: None,
+                },
+            );
+        }
+    }
+    for child in node
+        .get("children")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        collect_docs_terminal(child, space_id, tab_id, terminals);
+    }
+}
+
+#[cfg(windows)]
+fn cli_layout() -> Option<HashMap<String, AppTerminal>> {
+    let program = app_exe()?;
+    let value = run_json_command(&program, &["ls".to_owned()], Duration::from_millis(1200)).ok()?;
+    let mut terminals = HashMap::new();
+    for space in value
+        .get("spaces")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let space_id = space.get("id").and_then(Value::as_str).unwrap_or_default();
+        for tab in space
+            .get("tabs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let tab_id = tab.get("id").and_then(Value::as_str).unwrap_or_default();
+            for terminal in tab
+                .get("terminals")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let (Some(address), Some(pane_id)) = (
+                    terminal.get("terminal").and_then(Value::as_str),
+                    terminal.get("pane").and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                terminals.insert(
+                    address.to_owned(),
+                    AppTerminal {
+                        space_id: space_id.to_owned(),
+                        tab_id: tab_id.to_owned(),
+                        pane_id: pane_id.to_owned(),
+                        name: terminal
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_owned),
+                    },
+                );
+            }
+        }
+    }
+    (!terminals.is_empty()).then_some(terminals)
+}
+
+#[cfg(windows)]
+fn focused_pane_from_view(value: &Value) -> Option<String> {
+    let active = value.get("active")?.as_str()?;
+    let tab = value.get("spaces")?.get(active)?.as_str()?;
+    value
+        .get("tabs")?
+        .get(tab)?
+        .get("focused")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+#[cfg(windows)]
+fn file_focused_pane() -> Option<String> {
+    let path = app_home()?.join("view.json");
+    let value = serde_json::from_slice::<Value>(&fs::read(path).ok()?).ok()?;
+    focused_pane_from_view(&value)
+}
+
+#[cfg(windows)]
+fn cli_focused_pane() -> Option<String> {
+    let program = app_exe()?;
+    run_json_command(
+        &program,
+        &["status".to_owned()],
+        Duration::from_millis(1200),
+    )
+    .ok()?
+    .get("focused_pane")
+    .and_then(Value::as_str)
+    .map(str::to_owned)
+}
+
+#[cfg(windows)]
+fn enrich_from_app(snapshot: &mut HerdrSnapshot) {
+    let layout = file_layout().or_else(cli_layout);
+    // A closed window must not keep advertising its last focused pane.
+    let focused_pane = app_pid().and_then(|_| file_focused_pane().or_else(cli_focused_pane));
+    let Some(layout) = layout else {
+        return;
+    };
+    for agent in &mut snapshot.agents {
+        let Some(info) = layout.get(&agent.pane_id) else {
+            continue;
+        };
+        if !info.space_id.is_empty() {
+            agent.workspace_id = info.space_id.clone();
+        }
+        if !info.tab_id.is_empty() {
+            agent.tab_id = info.tab_id.clone();
+        }
+        if let Some(name) = info.name.as_ref() {
+            agent.display_name = name.clone();
+        }
+    }
+    if let Some(pane) = focused_pane {
+        let focused_terminal = layout
+            .iter()
+            .find(|(_, info)| info.pane_id == pane)
+            .map(|(terminal, _)| terminal.clone());
+        if let Some(terminal) = focused_terminal {
+            if let Some(agent) = snapshot
+                .agents
+                .iter_mut()
+                .find(|agent| agent.pane_id == terminal)
+            {
+                agent.focused = true;
+                snapshot.focused_pane_id = Some(terminal);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
 pub fn focused_pane_id(socket_path: Option<&str>) -> Option<String> {
     api_request(socket_path, "session.snapshot", serde_json::json!({}))
         .ok()
         .and_then(|result| parse_session_snapshot(&result).focused_pane_id)
 }
 
+#[cfg(not(windows))]
 fn pane_route(socket_path: Option<&str>, pane_id: &str) -> Option<(String, String)> {
     api_request(socket_path, "session.snapshot", serde_json::json!({}))
         .ok()
@@ -488,6 +1038,7 @@ fn parse_session_snapshot(root: &Value) -> HerdrSnapshot {
     }
 }
 
+#[cfg(not(windows))]
 pub fn agent_action(pane_id: &str, action: &str) -> bool {
     if pane_id.is_empty() || pane_id.starts_with('-') {
         return false;
@@ -510,6 +1061,7 @@ pub fn agent_action(pane_id: &str, action: &str) -> bool {
 /// Send an action plan directly to a herdr pane via the pane.send_keys API.
 /// This bypasses macOS global keyboard routing and works even when the host
 /// terminal window is not focused (e.g., when using hardware keyboard).
+#[cfg(not(windows))]
 pub fn send_plan(target: &HerdrTarget, plan: ActionPlan) -> bool {
     let Some(keys) = plan_keys(plan) else {
         eprintln!("[herdr::send_plan] unsupported plan: {:?}", plan);
@@ -627,6 +1179,7 @@ fn herdr_key_name(key_code: u16) -> Option<&'static str> {
     })
 }
 
+#[cfg(not(windows))]
 pub fn focus_pane(socket_path: Option<&str>, pane_id: &str) -> bool {
     api_request(
         socket_path,
@@ -636,6 +1189,129 @@ pub fn focus_pane(socket_path: Option<&str>, pane_id: &str) -> bool {
     .is_ok()
 }
 
+/// herdr-core has no "focus" RPC: showing a terminal is the app's job.
+/// `pane.focus` addresses a plain terminal, `agent.focus` also reveals its
+/// sub-agents. Both accept the terminal address used as our pane id.
+#[cfg(windows)]
+pub fn focus_pane(_socket_path: Option<&str>, pane_id: &str) -> bool {
+    focus_app_terminal("pane.focus", pane_id)
+}
+
+#[cfg(windows)]
+fn focus_app_terminal(command: &str, pane_id: &str) -> bool {
+    app_command(command, &[("terminal", pane_id)])
+        .is_ok_and(|result| result.get("ok").and_then(Value::as_bool).unwrap_or(true))
+}
+
+#[cfg(windows)]
+fn hc_key_name(key: &str) -> String {
+    match key {
+        "Escape" => "esc".into(),
+        "Enter" => "enter".into(),
+        "Tab" => "tab".into(),
+        "Left" => "left".into(),
+        "Right" => "right".into(),
+        "Up" => "up".into(),
+        "Down" => "down".into(),
+        " " => "space".into(),
+        other => other.to_owned(),
+    }
+}
+
+#[cfg(windows)]
+fn terminal_keys(pane_id: &str, keys: &[String]) -> bool {
+    api_request(
+        None,
+        "terminal.keys",
+        serde_json::json!({"terminal": pane_id, "keys": keys}),
+    )
+    .is_ok()
+}
+
+#[cfg(windows)]
+pub fn agent_action(pane_id: &str, action: &str) -> bool {
+    if pane_id.is_empty() || pane_id.starts_with('-') {
+        return false;
+    }
+    match action {
+        "focus" => focus_pane(None, pane_id),
+        "continue" => terminal_keys(pane_id, &["enter".into()]),
+        "stop" => terminal_keys(pane_id, &["esc".into()]),
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+pub fn send_plan(target: &HerdrTarget, plan: ActionPlan) -> bool {
+    match plan {
+        ActionPlan::TextInput { text, submit } => {
+            if submit {
+                api_request(
+                    target.socket_path.as_deref(),
+                    "terminal.send",
+                    serde_json::json!({"terminal": target.pane_id, "text": text}),
+                )
+                .is_ok()
+            } else {
+                let keys = text
+                    .chars()
+                    .map(|character| hc_key_name(&character.to_string()))
+                    .collect::<Vec<_>>();
+                terminal_keys(&target.pane_id, &keys)
+            }
+        }
+        other => plan_keys(other).is_some_and(|keys| {
+            let keys = keys.iter().map(|key| hc_key_name(key)).collect::<Vec<_>>();
+            terminal_keys(&target.pane_id, &keys)
+        }),
+    }
+}
+
+#[cfg(windows)]
+pub fn focus_panel(
+    socket_path: Option<&str>,
+    pane_id: &str,
+    agent_id: &str,
+    status: AgentStatus,
+) -> bool {
+    let _ = (socket_path, status);
+    let command = if agent_id.is_empty() || agent_id == "herdr" || agent_id == "terminal" {
+        "pane.focus"
+    } else {
+        "agent.focus"
+    };
+    let mut focused = focus_app_terminal(command, pane_id);
+    if !focused && app_pid().is_none() {
+        // Opening a session should also bring Herdr back up when its window
+        // was closed; the core is still running the terminals.
+        if let Some(program) = app_exe() {
+            let _ = Command::new(program)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !focused && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(150));
+                focused = focus_app_terminal(command, pane_id);
+            }
+        }
+    }
+    let raised = focus_host_window();
+    focused || raised
+}
+
+#[cfg(windows)]
+pub fn focus_target(agent_id: &str, target: &HerdrTarget, status: AgentStatus) -> bool {
+    focus_panel(
+        target.socket_path.as_deref(),
+        &target.pane_id,
+        agent_id,
+        status,
+    )
+}
+
+#[cfg(not(windows))]
 pub fn focus_panel(
     socket_path: Option<&str>,
     pane_id: &str,
@@ -712,6 +1388,7 @@ fn herdr_state(status: AgentStatus) -> &'static str {
     }
 }
 
+#[cfg(not(windows))]
 pub fn focus_target(agent_id: &str, target: &HerdrTarget, status: AgentStatus) -> bool {
     // Client-only target (no specific pane) — terminal activation is enough.
     if target.pane_id.starts_with("client:") {
@@ -763,6 +1440,16 @@ pub fn focus_target(agent_id: &str, target: &HerdrTarget, status: AgentStatus) -
         }),
     );
     focused
+}
+
+/// Raise the herdr-app window. The window is a normal Win32 top-level window
+/// owned by `herdr-app.exe`, so the same best-effort focus helper used for the
+/// agents applies.
+#[cfg(windows)]
+pub fn focus_host_window() -> bool {
+    app_pid().is_some_and(|pid| {
+        crate::win_focus::focus_process_window(Some(pid), &["herdr".to_owned()], None)
+    })
 }
 
 /// Raise the Alacritty window hosting the Herdr client. A Herdr client target
@@ -986,6 +1673,44 @@ prefix = "ctrl+s" # local override
         assert_eq!(snapshot.agents[0].agent, "qwen");
         assert_eq!(snapshot.agents[0].status, "unknown");
         assert!(snapshot.agents[0].focused);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn view_focus_follows_the_active_space_and_tab() {
+        let view = serde_json::json!({
+            "active": "sp1",
+            "spaces": {"sp1": "tab1"},
+            "tabs": {
+                "tab1": {"focused": "pane1"},
+                "tab2": {"focused": "pane2"}
+            }
+        });
+        assert_eq!(focused_pane_from_view(&view).as_deref(), Some("pane1"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn docs_layout_maps_terminals_to_their_panes() {
+        let docs = serde_json::json!({
+            "herdr-app": {"value": {"spaces": [{
+                "id": "sp1",
+                "tabs": [{
+                    "id": "tab1",
+                    "root": {
+                        "type": "row",
+                        "children": [
+                            {"id": "pane1", "content": {"terminal": "t7"}},
+                            {"type": "block", "id": "pane2", "content": {"terminal": "t8"}}
+                        ]
+                    }
+                }]
+            }]}}
+        });
+        let layout = parse_docs_layout(&docs).unwrap();
+        assert_eq!(layout["t7"].pane_id, "pane1");
+        assert_eq!(layout["t7"].space_id, "sp1");
+        assert_eq!(layout["t8"].tab_id, "tab1");
     }
 
     #[cfg(unix)]

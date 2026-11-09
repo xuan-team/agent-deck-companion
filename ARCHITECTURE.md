@@ -368,7 +368,7 @@ All macOS-gated code uses `#[cfg(target_os = "macos")]`; Windows path handling i
 |--------|----------------|---------------------|
 | `hardware_hid.rs` | CGEventTap (keyboard event interception) | Not implemented (vendor HID still works) |
 | `macos_input.rs` | CGEvent (key injection), Accessibility API | Not implemented |
-| `herdr.rs` | Unix sockets (Herdr IPC) | Returns empty snapshots; Herdr rows stay offline |
+| `herdr.rs` | Unix sockets (Herdr IPC) | herdr-core JSON-RPC over named pipe; herdr-app `agent.focus`/`pane.focus` |
 | `tmux.rs` | tmux command protocol | Not implemented |
 | `agent_detection.rs` | AppleScript (window focus), process inspection | Process inspection via sysinfo; `.exe`/path normalization |
 | `activation.rs` | `open -b` (app launch), AppleScript (browser tab focus) | `win_focus.rs`: Win32 window activation + `ShellExecuteW` |

@@ -418,7 +418,6 @@ fn sync_dsh_panels_from(
     }
 }
 
-#[cfg(target_os = "macos")]
 pub fn sync_herdr_panels(
     snapshot: &mut crate::state::AppSnapshot,
     herdr_snapshot: &crate::herdr::HerdrSnapshot,
@@ -1298,7 +1297,6 @@ mod tests {
     }
 }
 
-#[cfg(target_os = "macos")]
 pub fn refresh_herdr_state(app: &tauri::AppHandle, state: &Arc<AppRuntime>) -> bool {
     let herdr_snapshot = crate::herdr::session_snapshot();
     if state

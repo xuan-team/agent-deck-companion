@@ -170,7 +170,15 @@ pub fn process_matches(process: &sysinfo::Process, agent_id: &str, executable: &
         return process
             .exe()
             .and_then(|path| path.file_name())
-            .is_some_and(|name| name.eq_ignore_ascii_case("herdr"));
+            .is_some_and(|name| {
+                // Legacy `herdr`, plus the Windows `herdr-core` service and
+                // `herdr-app` window process.
+                name.eq_ignore_ascii_case("herdr")
+                    || name.eq_ignore_ascii_case("herdr-core")
+                    || name.eq_ignore_ascii_case("herdr-core.exe")
+                    || name.eq_ignore_ascii_case("herdr-app")
+                    || name.eq_ignore_ascii_case("herdr-app.exe")
+            });
     }
     // Generic fallback: match the configured executable name.
     let name = process.name().to_string_lossy();

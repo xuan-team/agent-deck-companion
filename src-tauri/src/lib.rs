@@ -504,7 +504,7 @@ pub fn run() {
                 };
                 thread::sleep(interval);
             });
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             {
                 let herdr_state = state.clone();
                 let herdr_app = app_handle.clone();
@@ -530,16 +530,20 @@ pub fn run() {
                 let fallback_state = state.clone();
                 let fallback_app = app_handle.clone();
                 thread::spawn(move || loop {
-                    thread::sleep(Duration::from_secs(30));
+                    // herdr-app keeps its focus state outside the core, so no
+                    // core event announces a terminal switch. A short poll is
+                    // cheap on Windows because the snapshot reads local files.
+                    let interval = if cfg!(windows) { 3 } else { 30 };
+                    thread::sleep(Duration::from_secs(interval));
                     let _ = monitor::refresh_herdr_state(&fallback_app, &fallback_state);
                 });
-
-                chatgpt_quota::spawn_worker(
-                    state.chatgpt_quota.clone(),
-                    state.chatgpt_threads.clone(),
-                    state.chatgpt_quota_wanted.clone(),
-                );
             }
+            #[cfg(target_os = "macos")]
+            chatgpt_quota::spawn_worker(
+                state.chatgpt_quota.clone(),
+                state.chatgpt_threads.clone(),
+                state.chatgpt_quota_wanted.clone(),
+            );
             Ok(())
         })
         .build(tauri::generate_context!())

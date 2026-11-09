@@ -331,7 +331,7 @@ fn spawn_agent_focus(
     pid: Option<u32>,
     executable: String,
     preferred_cwd: Option<String>,
-    _status: AgentStatus,
+    status: AgentStatus,
 ) {
     let agent_id = agent_id.to_string();
     let focus_generation = state.focus_generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -342,7 +342,7 @@ fn spawn_agent_focus(
         .map(|plugin| plugin.terminal_title_hints.clone())
         .unwrap_or_default();
     if !executable.is_empty() {
-        hints.push(executable);
+        hints.push(executable.clone());
     }
     thread::spawn(move || {
         let _focus = focus_state
@@ -352,9 +352,58 @@ fn spawn_agent_focus(
         if focus_state.focus_generation.load(Ordering::SeqCst) != focus_generation {
             return;
         }
+        if agent_id == "herdr" {
+            let raised = crate::herdr::focus_host_window();
+            eprintln!("[activate] windows focus herdr-app raised={raised}");
+            return;
+        }
         if agent_id == "dsh" {
             if let Some(url) = dsh::web_url(&System::new_all()) {
                 crate::win_focus::open_url(&url);
+                return;
+            }
+        }
+        // An exact terminal identity from the agent's environment is the most
+        // reliable target; herdr-app can then reveal that terminal even when
+        // its OS window is behind another one.
+        if let Some(target) = crate::herdr::find_target(
+            &agent_id,
+            &executable,
+            preferred_cwd.as_deref(),
+            Some(focus_state.plugins.as_ref()),
+            None,
+        ) {
+            if crate::herdr::focus_target(&agent_id, &target, status) {
+                eprintln!(
+                    "[activate] windows herdr focus agent={agent_id} terminal={}",
+                    target.pane_id
+                );
+                return;
+            }
+        }
+        // Fall back to the last herdr snapshot: prefer the matching cwd, then
+        // the terminal the window already shows.
+        let candidate = {
+            let snapshot = focus_state.read();
+            snapshot
+                .herdr
+                .agents
+                .iter()
+                .filter(|agent| agent.agent == agent_id)
+                .min_by_key(|agent| {
+                    (
+                        agent.cwd.as_deref() != preferred_cwd.as_deref(),
+                        !agent.focused,
+                    )
+                })
+                .cloned()
+        };
+        if let Some(agent) = candidate {
+            if crate::herdr::focus_panel(None, &agent.pane_id, &agent.agent, status) {
+                eprintln!(
+                    "[activate] windows herdr snapshot focus agent={agent_id} terminal={}",
+                    agent.pane_id
+                );
                 return;
             }
         }
@@ -804,16 +853,23 @@ fn open_session_windows(
         PanelTransport::Terminal { pid } => {
             crate::win_focus::focus_process_window(Some(*pid), &hints, panel.cwd.as_deref())
         }
+        PanelTransport::Herdr {
+            socket_path,
+            pane_id,
+        } => crate::herdr::focus_panel(
+            socket_path.as_deref(),
+            pane_id,
+            &panel.agent_id,
+            panel.status,
+        ),
         PanelTransport::DshWeb { .. } => {
             dsh::web_url(&System::new_all()).is_some_and(|url| crate::win_focus::open_url(&url))
         }
         PanelTransport::CodexThread { thread_id } => {
             crate::win_focus::open_url(&format!("codex://threads/{thread_id}"))
         }
-        // Herdr and tmux use Unix sockets and have no Windows backend.
-        PanelTransport::Herdr { .. } | PanelTransport::Tmux { .. } | PanelTransport::Unknown => {
-            false
-        }
+        // tmux has no Windows backend.
+        PanelTransport::Tmux { .. } | PanelTransport::Unknown => false,
     };
     if !current() {
         return OpenOutcome::Superseded;

@@ -148,7 +148,7 @@ fn ensure_bridge(home: &Path) -> Result<PathBuf, String> {
             .collect::<Vec<_>>()
             .join("|");
         let script = format!(
-            "#!/bin/sh\nagent=\"$1\"\ncase \"$agent\" in {allowed_agents}) ;; *) exit 0 ;; esac\ntoken=$(/bin/cat {token})\n/usr/bin/curl --silent --max-time 1 --output /dev/null --header \"content-type: application/json\" --header \"x-agent-deck-token: $token\" --header \"x-agent-deck-pid: $PPID\" --header \"x-agent-deck-herdr-socket: $HERDR_SOCKET_PATH\" --header \"x-agent-deck-herdr-pane: $HERDR_PANE_ID\" --header \"x-agent-deck-tmux: $TMUX\" --header \"x-agent-deck-tmux-pane: $TMUX_PANE\" --request POST --data-binary @- \"http://127.0.0.1:34115/api/hooks/$agent\" 2>/dev/null || true\nexit 0\n"
+            "#!/bin/sh\nagent=\"$1\"\ncase \"$agent\" in {allowed_agents}) ;; *) exit 0 ;; esac\ntoken=$(/bin/cat {token})\nherdr_socket=\"${{HERDR_SOCKET_PATH:-$HC_TERMINAL_SOCKET}}\"\nherdr_pane=\"${{HERDR_PANE_ID:-$HC_TERMINAL_ID}}\"\n/usr/bin/curl --silent --max-time 1 --output /dev/null --header \"content-type: application/json\" --header \"x-agent-deck-token: $token\" --header \"x-agent-deck-pid: $PPID\" --header \"x-agent-deck-herdr-socket: $herdr_socket\" --header \"x-agent-deck-herdr-pane: $herdr_pane\" --header \"x-agent-deck-tmux: $TMUX\" --header \"x-agent-deck-tmux-pane: $TMUX_PANE\" --request POST --data-binary @- \"http://127.0.0.1:34115/api/hooks/$agent\" 2>/dev/null || true\nexit 0\n"
         );
         fs::write(&path, script)
             .map_err(|error| format!("failed to write hook bridge: {error}"))?;
@@ -169,10 +169,14 @@ if (@({allowed_agents}) -notcontains $agent) {{ exit 0 }}
 $token = [IO.File]::ReadAllText({token_literal}).Trim()
 $hookPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
 if (-not $hookPid) {{ $hookPid = $PID }}
+$herdrSocket = if ($env:HERDR_SOCKET_PATH) {{ $env:HERDR_SOCKET_PATH }} else {{ $env:HC_TERMINAL_SOCKET }}
+$herdrPane = if ($env:HERDR_PANE_ID) {{ $env:HERDR_PANE_ID }} else {{ $env:HC_TERMINAL_ID }}
 $body = [Console]::In.ReadToEnd()
 $headers = @{{
     'x-agent-deck-token' = $token
     'x-agent-deck-pid' = "$hookPid"
+    'x-agent-deck-herdr-socket' = "$herdrSocket"
+    'x-agent-deck-herdr-pane' = "$herdrPane"
 }}
 try {{
     Invoke-RestMethod -Uri "http://127.0.0.1:34115/api/hooks/$agent" -Method Post `
